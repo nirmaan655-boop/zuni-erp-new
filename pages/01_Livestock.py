@@ -1,54 +1,50 @@
 import streamlit as st
 import pandas as pd
-from zuni_db import db_connect, fetch_df
+import sqlite3
+import os
 from datetime import datetime, date
 
-# --- 0. DATABASE INITIALIZATION ---
-def init_livestock_db():
-    with db_connect() as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS AnimalMaster (
-            TagID TEXT PRIMARY KEY, RFID TEXT, Breed TEXT, Category TEXT, CurrentPen TEXT, 
-            Weight REAL DEFAULT 0, Status TEXT DEFAULT 'Active', LactationNo INTEGER DEFAULT 0,
-            BirthDate TEXT, Sire1 TEXT, Sire2 TEXT)""")
-        
-        conn.execute("CREATE TABLE IF NOT EXISTS MilkLogs (Date TEXT, TagID TEXT, Morning REAL, Noon REAL, Evening REAL, Total REAL)")
-        conn.execute("CREATE TABLE IF NOT EXISTS TreatmentLogs (Date TEXT, TagID TEXT, Med1 TEXT, Qty1 REAL, UOM1 TEXT, Med2 TEXT, Qty2 REAL, UOM2 TEXT, Med3 TEXT, Qty3 REAL, UOM3 TEXT, Med4 TEXT, Qty4 REAL, UOM4 TEXT, Symptoms TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS BreedingLogs (Date TEXT, TagID TEXT, Action TEXT, HeatStatus TEXT, SemenName TEXT, DoseQty INTEGER, PD_Result TEXT, Vet TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS CalvingLogs (Date TEXT, DamID TEXT, Result TEXT, Type TEXT, Calf1_Tag TEXT, Calf1_Sex TEXT, Calf2_Tag TEXT, Calf2_Sex TEXT, Calf1_W REAL, Calf2_W REAL, LactNo INTEGER)")
-        conn.execute("CREATE TABLE IF NOT EXISTS WeightLogs (Date TEXT, TagID TEXT, CurrentWeight REAL, PreviousWeight REAL, Gain REAL, DaysGap INTEGER, AvgDailyGain REAL)")
-        conn.execute("CREATE TABLE IF NOT EXISTS MoveLogs (Date TEXT, TagID TEXT, FromPen TEXT, ToPen TEXT, Reason TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS VacLogs (Date TEXT, TagIDs TEXT, VaccineName TEXT, Dose REAL, Batch TEXT)")
-        conn.commit()
+# --- 0. DATABASE CONNECTION ---
+def get_connection():
+    db_path = os.path.join(os.getcwd(), 'Zuni.db')
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    return conn
 
-init_livestock_db()
+conn = get_connection()
 
 # --- 1. BRANDING & UI ---
-st.set_page_config(layout="wide", page_title="Zuni Livestock Pro")
+st.set_page_config(layout="wide", page_title="Zuni Livestock Pro Master")
 st.markdown("""
-    <div style='background: linear-gradient(90deg, #001F3F 0%, #003366 100%); padding: 15px; border-radius: 10px; border-bottom: 5px solid #FF851B; margin-bottom: 20px; text-align: center;'>
-        <h1 style='color: white; margin: 0;'>🐄 ZUNI LIVESTOCK PRO <span style='color: #FF851B;'>v7.0</span></h1>
-        <p style='color: #FF851B; font-weight: bold;'>Complete 10-Tab Farm Management System</p>
+    <div style='background: linear-gradient(90deg, #001F3F 0%, #003366 100%); padding: 20px; border-radius: 15px; border-bottom: 5px solid #FF851B; margin-bottom: 20px; text-align: center;'>
+        <h1 style='color: white; margin: 0;'>🐄 ZUNI LIVESTOCK <span style='color: #FF851B;'>PRO MASTER</span></h1>
+        <p style='color: #FF851B; font-weight: bold; font-size: 18px;'>Dynamic Farm Management | Version 8.0</p>
     </div>
     """, unsafe_allow_html=True)
 
 # --- 2. DATA FETCHING ---
-with db_connect() as conn:
-    animal_data = fetch_df(conn, "SELECT * FROM AnimalMaster")
-    tag_list = animal_data['TagID'].tolist() if not animal_data.empty else []
-    try:
-        items = fetch_df(conn, "SELECT ItemName, UOM FROM ItemMaster")
-        med_dict = dict(zip(items['ItemName'], items['UOM']))
-    except: med_dict = {}
-    med_list = ["None"] + list(med_dict.keys())
+animal_data = pd.read_sql("SELECT * FROM AnimalMaster", conn)
+tag_list = animal_data['TagID'].tolist() if not animal_data.empty else []
+# Sirf Bulls ki list Natural Service ke liye
+bull_list = animal_data[animal_data['Category'] == 'Bull']['TagID'].tolist()
+
+# Semen Bank Items fetching from ItemMaster
+try:
+    semen_items = pd.read_sql("SELECT ItemName FROM ItemMaster WHERE Category = 'Semen Straws'", conn)['ItemName'].tolist()
+except: semen_items = ["Local Semen", "Imported Semen"]
+
+# Medicine mapping for Treatment
+try:
+    med_df = pd.read_sql("SELECT ItemName, UOM FROM ItemMaster", conn)
+    med_dict = dict(zip(med_df['ItemName'], med_df['UOM']))
+except: med_dict = {}
 
 def show_history(table, tag=None):
     st.markdown(f"**📋 Recent {table} Records**")
-    query = f"SELECT rowid as ID, * FROM {table}"
+    query = f"SELECT * FROM {table}"
     if tag: query += f" WHERE TagID='{tag}' OR DamID='{tag}'"
     query += " ORDER BY rowid DESC LIMIT 5"
-    with db_connect() as conn:
-        df = fetch_df(conn, query)
-        if not df.empty: st.dataframe(df, use_container_width=True, hide_index=True)
+    df = pd.read_sql(query, conn)
+    if not df.empty: st.dataframe(df, use_container_width=True, hide_index=True)
 
 # --- 3. THE 10 TABS ---
 t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 = st.tabs([
@@ -57,143 +53,127 @@ t1, t2, t3, t4, t5, t6, t7, t8, t9, t10 = st.tabs([
 
 # TAB 1: 360° VIEW
 with t1:
-    st.subheader("All Animals Overview")
+    st.subheader("All Animals Status")
     st.dataframe(animal_data, use_container_width=True)
 
-# TAB 2: COW CARD (Full History Search)
+# TAB 2: COW CARD
 with t2:
-    sid = st.selectbox("Search Animal ID for Card", [""] + tag_list)
+    sid = st.selectbox("Search Animal ID", [""] + tag_list)
     if sid:
-        row = animal_data[animal_data['TagID'] == sid].iloc
-        st.markdown(f"### 🐄 COW CARD: {sid} | RFID: {row['RFID']}")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Breed", row['Breed']); c2.metric("Lactation", row['LactationNo'])
-        c3.metric("Current Weight", f"{row['Weight']} kg"); c4.metric("Status", row['Status'])
-        st.divider()
-        sub_t1, sub_t2, sub_t3 = st.tabs(["Breeding/Calving", "Medical History", "Production"])
-        with sub_t1: show_history("BreedingLogs", sid); show_history("CalvingLogs", sid)
-        with sub_t2: show_history("TreatmentLogs", sid); show_history("VacLogs", sid)
-        with sub_t3: show_history("MilkLogs", sid)
+        row = animal_data[animal_data['TagID'] == sid].iloc[0]
+        st.markdown(f"### 🐄 {sid} | {row['Breed']} | {row['Category']}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Current Weight", f"{row['Weight']} kg")
+        c2.metric("Lactation", row['LactationNo'])
+        c3.metric("Status", row['Status'])
+        show_history("MilkLogs", sid)
+        show_history("TreatmentLogs", sid)
 
 # TAB 3: MILK LOGS
 with t3:
     with st.form("milk_f"):
-        tag = st.selectbox("Tag ID", tag_list); d = st.date_input("Date", date.today())
-        c1, c2, c3 = st.columns(3); m = c1.number_input("Morning"); n = c2.number_input("Noon"); e = c3.number_input("Evening")
-        if st.form_submit_button("✅ Save Milk Data"):
-            with db_connect() as conn:
-                conn.execute("INSERT INTO MilkLogs VALUES (?,?,?,?,?,?)", (str(d), tag, m, n, e, m+n+e))
-                conn.commit(); st.rerun()
+        c1, c2 = st.columns(2)
+        tag = c1.selectbox("Tag ID", tag_list)
+        d = c2.date_input("Date", date.today())
+        m1, m2, m3 = st.columns(3)
+        m = m1.number_input("Morning"); n = m2.number_input("Noon"); e = m3.number_input("Evening")
+        if st.form_submit_button("✅ Save Milk"):
+            conn.execute("INSERT INTO MilkLogs VALUES (?,?,?,?,?,?)", (str(d), tag, m, n, e, m+n+e))
+            conn.commit(); st.rerun()
     show_history("MilkLogs")
 
-# TAB 4: TREATMENT (4 Injections + UOM)
+# TAB 4: TREATMENT
 with t4:
     with st.form("treat_f"):
-        tag = st.selectbox("Select Patient", tag_list)
-        cols = st.columns(4); t_ins = []
+        tag = st.selectbox("Animal", tag_list)
+        cols = st.columns(4); t_data = []
         for i in range(4):
             with cols[i]:
-                m = st.selectbox(f"Injection {i+1}", med_list, key=f"tm{i}")
-                q = st.number_input(f"Qty {i+1}", key=f"tq{i}")
-                u = med_dict.get(m, "-"); st.caption(f"UOM: {u}"); t_ins.extend([m, q, u])
-        if st.form_submit_button("💉 Log Treatment"):
-            with db_connect() as conn:
-                conn.execute("INSERT INTO TreatmentLogs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (str(date.today()), tag, *t_ins, "Standard Treatment"))
-                conn.commit(); st.rerun()
-    show_history("TreatmentLogs")
+                m = st.selectbox(f"Med {i+1}", ["None"] + list(med_dict.keys()), key=f"m{i}")
+                q = st.number_input(f"Qty {i+1}", key=f"q{i}")
+                u = med_dict.get(m, "-")
+                t_data.extend([m, q, u])
+        if st.form_submit_button("💉 Save Treatment"):
+            conn.execute("INSERT INTO TreatmentLogs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (str(date.today()), tag, *t_data, "Normal"))
+            conn.commit(); st.rerun()
 
-# TAB 5: BREEDING (Heat & PD)
+# TAB 5: BREEDING (DYNAMIC AI/PD/NATURAL)
 with t5:
-    with st.form("breed_f"):
+    st.subheader("🧬 Breeding & Reproduction")
+    with st.form("breed_dynamic"):
         tag = st.selectbox("Cow Tag", tag_list)
-        act = st.selectbox("Action", ["Insemination (AI)", "PD Check", "Natural Service", "Dry Off"])
-        heat = st.selectbox("Heat Status", ["Natural", "Ovsynch", "G6G", "Pre-synch", "Silent Heat"])
-        pd_r = st.selectbox("PD Result", ["N/A", "Pregnant (+)", "Empty (-)", "Abortion"])
+        act = st.selectbox("Select Action", ["Insemination (AI)", "PD Check", "Natural Service", "Dry Off"])
+        
+        # Dynamic Options based on Action
+        heat, semen, qty, pd_r, bull = "N/A", "N/A", 0, "N/A", "N/A"
+        
+        if act == "Insemination (AI)":
+            c1, c2, c3 = st.columns(3)
+            heat = c1.selectbox("Heat Status", ["Natural", "Ovsynch", "Silent"])
+            semen = c2.selectbox("Select Straw (Semen Bank)", semen_items)
+            qty = c3.number_input("Doses Used", min_value=1, value=1)
+        elif act == "PD Check":
+            pd_r = st.radio("PD Result", ["Pregnant (+)", "Empty (-)", "Abortion"], horizontal=True)
+        elif act == "Natural Service":
+            bull = st.selectbox("Select Bull (from Farm)", bull_list if bull_list else ["No Bull Registered"])
+        
+        vet = st.text_input("Vet/Inseminator", "Dr. Zuni")
         if st.form_submit_button("🧬 Save Breeding"):
-            with db_connect() as conn:
-                conn.execute("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?,?,?)", (str(date.today()), tag, act, heat, "Semen", 1, pd_r, "Vet"))
-                conn.commit(); st.rerun()
-    show_history("BreedingLogs")
+            conn.execute("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?,?,?)", (str(date.today()), tag, act, heat, semen, qty, pd_r, vet))
+            conn.commit(); st.success("Breeding Data Logged!"); st.rerun()
 
-# TAB 6: CALVING (Twins Logic Fixed)
+# TAB 6: CALVING (DYNAMIC SINGLE/TWINS)
 with t6:
-    with st.form("calv_f"):
-        dam = st.selectbox("Dam ID (Mother)", tag_list)
+    st.subheader("🍼 Calving Registration")
+    with st.form("calving_dynamic"):
+        dam = st.selectbox("Mother (Dam) ID", tag_list)
         ctype = st.radio("Birth Type", ["Single", "Twins"], horizontal=True)
-        res = st.selectbox("Birth Result", ["Live Birth", "Stillborn", "Abortion"])
+        res = st.selectbox("Result", ["Live Birth", "Stillborn"])
+        
         st.divider()
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**Calf 1 Details**")
-            c1t = st.text_input("Tag 1"); c1s = st.selectbox("Sex 1", ["Heifer", "Bull", "Freemartin"]); c1w = st.number_input("Birth Weight 1")
-        c2t, c2s, c2w = "N/A", "N/A", 0
+            st.markdown("### Calf 1 Details")
+            c1t = st.text_input("Calf 1 Tag").upper()
+            c1s = st.selectbox("Sex 1", ["Heifer", "Bull"])
+            c1w = st.number_input("Weight 1 (kg)", value=30.0)
+            
         if ctype == "Twins":
             with col2:
-                st.markdown("**Calf 2 Details**")
-                c2t = st.text_input("Tag 2"); c2s = st.selectbox("Sex 2", ["Heifer", "Bull", "Freemartin"]); c2w = st.number_input("Birth Weight 2")
+                st.markdown("### Calf 2 Details")
+                c2t = st.text_input("Calf 2 Tag").upper()
+                c2s = st.selectbox("Sex 2", ["Heifer", "Bull"])
+                c2w = st.number_input("Weight 2 (kg)", value=28.0)
+        else:
+            c2t, c2s, c2w = "N/A", "N/A", 0
+
         if st.form_submit_button("🍼 Register Birth"):
-            with db_connect() as conn:
+            if c1t:
                 conn.execute("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?,?,?,?,?,?)", (str(date.today()), dam, res, ctype, c1t, c1s, c2t, c2s, c1w, c2w, 1))
-                conn.execute("INSERT INTO AnimalMaster (TagID, Category, BirthDate, Weight) VALUES (?,?,?,?)", (c1t, "Young", str(date.today()), c1w))
-                if ctype == "Twins":
-                    conn.execute("INSERT INTO AnimalMaster (TagID, Category, BirthDate, Weight) VALUES (?,?,?,?)", (c2t, "Young", str(date.today()), c2w))
-                conn.commit(); st.success("Calving Success!"); st.rerun()
-    show_history("CalvingLogs")
+                # Add to Master
+                conn.execute("INSERT OR REPLACE INTO AnimalMaster (TagID, Category, BirthDate, Weight, Status) VALUES (?,?,?,?,'Active')", (c1t, "Calf", str(date.today()), c1w))
+                if ctype == "Twins" and c2t:
+                    conn.execute("INSERT OR REPLACE INTO AnimalMaster (TagID, Category, BirthDate, Weight, Status) VALUES (?,?,?,?,'Active')", (c2t, "Calf", str(date.today()), c2w))
+                conn.commit(); st.success("Birth Registered!"); st.rerun()
 
-# TAB 7: WEIGHT (Last Weight Recovery Fixed)
+# TAB 7: WEIGHT
 with t7:
-    st.subheader("Weight Monitoring")
-    w_tag = st.selectbox("Select Animal for Weight", [""] + tag_list, key="w_tag_main")
-    last_weight = 0.0
+    w_tag = st.selectbox("Select for Weight", [""] + tag_list)
     if w_tag:
-        with db_connect() as conn:
-            res_w = fetch_df(conn, f"SELECT Weight FROM AnimalMaster WHERE TagID='{w_tag}'")
-            if not res_w.empty: last_weight = float(res_w['Weight'].iloc)
-    
-    st.info(f"📊 **Last Recorded Weight: {last_weight} kg**")
-    
-    with st.form("weight_form"):
-        cur_w = st.number_input("Enter New Weight", min_value=0.0)
-        if st.form_submit_button("⚖️ Update Weight"):
-            gain = cur_w - last_weight
-            with db_connect() as conn:
-                conn.execute("INSERT INTO WeightLogs (Date, TagID, CurrentWeight, PreviousWeight, Gain) VALUES (?,?,?,?,?)", (str(date.today()), w_tag, cur_w, last_weight, gain))
-                conn.execute("UPDATE AnimalMaster SET Weight=? WHERE TagID=?", (cur_w, w_tag))
-                conn.commit(); st.success(f"Updated! Gain: {gain}kg"); st.rerun()
-    show_history("WeightLogs")
+        cur_w = st.number_input("Current Weight", min_value=0.0)
+        if st.button("⚖️ Log Weight"):
+            conn.execute("UPDATE AnimalMaster SET Weight = ? WHERE TagID = ?", (cur_w, w_tag))
+            conn.execute("INSERT INTO WeightLogs (Date, TagID, CurrentWeight) VALUES (?,?,?)", (str(date.today()), w_tag, cur_w))
+            conn.commit(); st.rerun()
 
-# TAB 8: VACCINATION (Bulk)
-with t8:
-    with st.form("vac_f"):
-        v_tags = st.multiselect("Select Animals", tag_list)
-        v_name = st.text_input("Vaccine Name"); v_dose = st.number_input("Dose (ml)")
-        if st.form_submit_button("💉 Bulk Log Vaccination"):
-            with db_connect() as conn:
-                conn.execute("INSERT INTO VacLogs VALUES (?,?,?,?,?)", (str(date.today()), str(v_tags), v_name, v_dose, "Batch-001"))
-                conn.commit(); st.success("Vaccination Recorded!"); st.rerun()
-    show_history("VacLogs")
-
-# TAB 9: MOVEMENT (Pen Transfer)
-with t9:
-    with st.form("move_f"):
-        m_tag = st.selectbox("Select Animal to Move", tag_list)
-        to_pen = st.selectbox("New Pen Location", ["PEN-A", "PEN-B", "DRY-PEN", "CALF-PEN", "QUARANTINE"])
-        if st.form_submit_button("🏠 Transfer Pen"):
-            with db_connect() as conn:
-                conn.execute("UPDATE AnimalMaster SET CurrentPen=? WHERE TagID=?", (to_pen, m_tag))
-                conn.commit(); st.success("Moved Successfully!"); st.rerun()
-
-# TAB 10: REGISTRATION (RFID & Pedigree)
+# TAB 10: REGISTRATION
 with t10:
-    with st.form("reg_f"):
-        col1, col2 = st.columns(2)
-        r_tag = col1.text_input("New Visual Tag ID")
-        r_rfid = col2.text_input("RFID Chip Number")
-        r_breed = st.selectbox("Select Breed", ["HF", "Jersey", "Sahiwal", "Cross", "Cholistani"])
-        r_bday = st.date_input("Date of Birth", date.today())
-        s1 = st.text_input("Sire ID (Father)"); s2 = st.text_input("Sire 2 ID (G-Father)")
-        if st.form_submit_button("💾 Complete Registration"):
-            with db_connect() as conn:
-                conn.execute("INSERT INTO AnimalMaster (TagID, RFID, Breed, Category, Status, BirthDate, Sire1, Sire2) VALUES (?,?,?,?,?,?,?,?)",
-                             (r_tag, r_rfid, r_breed, "Adult", "Active", str(r_bday), s1, s2))
-                conn.commit(); st.success(f"Animal {r_tag} Registered!"); st.rerun()
+    st.subheader("📝 Register New Animal")
+    with st.form("reg_new"):
+        rtag = st.text_input("Tag ID").upper()
+        rcat = st.selectbox("Category", ["Cow", "Heifer", "Bull", "Calf"])
+        rbreed = st.selectbox("Breed", ["Cholistani", "Sahiwal", "Friesian", "Cross"])
+        rstat = st.selectbox("Status", ["Active", "Dry", "Sold", "Dead"])
+        if st.form_submit_button("✅ Register"):
+            conn.execute("INSERT OR REPLACE INTO AnimalMaster (TagID, Category, Breed, Status, Weight) VALUES (?,?,?,?,0)", (rtag, rcat, rbreed, rstat))
+            conn.commit(); st.success("Registered!"); st.rerun()
