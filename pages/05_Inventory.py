@@ -1,6 +1,32 @@
 import streamlit as st
 import pandas as pd
-from zuni_db import db_connect, fetch_df
+import sqlite3
+import os
+
+# --- DATABASE CONNECTION FIX (Zuni special) ---
+def get_connection():
+    # Cloud pe write access ke liye sahi rasta
+    db_path = os.path.join(os.getcwd(), 'Zuni.db')
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    # Tables agar nahi bane to bana dega
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ItemMaster (
+            ItemName TEXT PRIMARY KEY, 
+            Category TEXT, 
+            UOM TEXT, 
+            Quantity REAL DEFAULT 0, 
+            Cost REAL DEFAULT 0, 
+            Nutrition TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS AnimalMaster (
+            TagID TEXT PRIMARY KEY, 
+            Category TEXT
+        )
+    """)
+    conn.commit()
+    return conn
 
 # --- BRANDING ---
 st.markdown("""
@@ -11,16 +37,15 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- FETCH DATA ---
-with db_connect() as conn:
-    try:
-        # Saara data ItemMaster se uthayen (Quantity, Cost, Nutrition ke saath)
-        stock_df = fetch_df(conn, "SELECT ItemName, Category, UOM, Quantity, Cost, Nutrition FROM ItemMaster")
-        animals_raw = fetch_df(conn, "SELECT TagID, Category FROM AnimalMaster")
-    except:
-        stock_df = pd.DataFrame(columns=['ItemName', 'Category', 'UOM', 'Quantity', 'Cost', 'Nutrition'])
-        animals_raw = pd.DataFrame()
+conn = get_connection()
+try:
+    stock_df = pd.read_sql("SELECT ItemName, Category, UOM, Quantity, Cost, Nutrition FROM ItemMaster", conn)
+    animals_raw = pd.read_sql("SELECT TagID, Category FROM AnimalMaster", conn)
+except:
+    stock_df = pd.DataFrame(columns=['ItemName', 'Category', 'UOM', 'Quantity', 'Cost', 'Nutrition'])
+    animals_raw = pd.DataFrame(columns=['TagID', 'Category'])
 
-# --- TABS (SAARAY ORIGINAL TABS) ---
+# --- TABS ---
 t1, t2, t3, t4, t5, t6 = st.tabs(["🌾 FEED RECIPE", "💰 ANIMAL P&L", "🧬 SEMEN BANK", "💊 MEDICINES", "⛽ GENERAL STORES", "➕ REGISTER ITEM"])
 
 with t1:
@@ -38,11 +63,12 @@ with t1:
 with t2:
     st.subheader("💰 Daily Profit & Loss Mapping")
     if not animals_raw.empty:
-        # P&L Formula Logic
         pl_display = animals_raw.copy()
-        pl_display['Daily Feed Cost'] = daily_qty * 125 # Default Avg Rate
+        pl_display['Daily Feed Cost'] = daily_qty * 125 
         pl_display['Daily Profit (Est)'] = (20.0 * 210) - pl_display['Daily Feed Cost']
         st.dataframe(pl_display, use_container_width=True)
+    else:
+        st.info("No animals found in AnimalMaster.")
 
 with t3:
     st.subheader("🧬 Semen Bank (Straw Inventory)")
@@ -65,10 +91,15 @@ with t6:
         f_name = st.text_input("Item Name (e.g. WANDA #1)").upper()
         f_cat = st.selectbox("Store Category", ["Feed", "Medicine", "Vaccine", "Semen Straws", "General Asset"])
         f_uom = st.selectbox("Unit (UOM)", ["KG", "Bag", "Litre", "ml", "Straw", "Vial", "Dose", "Bottle", "Each"])
+        
         if st.form_submit_button("✅ REGISTER ITEM"):
             if f_name:
-                with db_connect() as conn:
+                try:
                     conn.execute("INSERT OR REPLACE INTO ItemMaster (ItemName, Category, UOM, Quantity, Cost) VALUES (?,?,?,0,0)", (f_name, f_cat, f_uom))
                     conn.commit()
-                st.success(f"{f_name} Added to {f_cat} Store!")
-                st.rerun()
+                    st.success(f"{f_name} Added to {f_cat} Store!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+            else:
+                st.warning("Please enter an item name.")
