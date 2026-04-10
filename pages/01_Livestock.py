@@ -16,13 +16,14 @@ def execq(sql, params=()):
     conn.execute(sql, params)
     conn.commit()
 
-# ================= AUTO TABLES =================
+# ================= TABLES =================
 def setup():
+
     conn.execute("""CREATE TABLE IF NOT EXISTS AnimalMaster (
         TagID TEXT PRIMARY KEY,
         Category TEXT,
         Breed TEXT,
-        Status TEXT,
+        Status TEXT DEFAULT 'Healthy',
         Weight REAL DEFAULT 0
     )""")
 
@@ -59,12 +60,12 @@ def setup():
 
 setup()
 
-# ================= LOAD =================
+# ================= DATA =================
 animals = q("SELECT * FROM AnimalMaster")
 tags = animals["TagID"].tolist() if not animals.empty else []
 
 st.set_page_config(layout="wide")
-st.title("🐄 ZUNI LIVESTOCK ERP - 11 TAB MASTER SYSTEM")
+st.title("🐄 LIVESTOCK ERP - FINAL 10 TAB SYSTEM")
 
 # ================= TABS =================
 tabs = st.tabs([
@@ -75,7 +76,6 @@ tabs = st.tabs([
     "💉 Vaccination",
     "🩺 Treatment",
     "🏥 Hospital",
-    "📦 Inventory",
     "🚚 Movement",
     "📊 Reports",
     "📈 Dashboard"
@@ -83,19 +83,19 @@ tabs = st.tabs([
 
 # ================= 1 COW CARD =================
 with tabs[0]:
-    st.subheader("🐄 Cow Card (Full Profile)")
+    st.subheader("🐄 Cow Card (Full History)")
 
     if tags:
         tag = st.selectbox("Select Animal", tags)
 
-        st.dataframe(animals[animals["TagID"]==tag])
+        st.dataframe(animals[animals["TagID"] == tag])
 
-        st.markdown("### 📊 History Snapshot")
+        st.markdown("### 📊 History")
 
-        st.metric("Vaccines", len(q(f"SELECT * FROM VaccineLogs WHERE AnimalTag='{tag}'")))
-        st.metric("Breeding", len(q(f"SELECT * FROM BreedingLogs WHERE CowTag='{tag}'")))
-        st.metric("Calving", len(q(f"SELECT * FROM CalvingLogs WHERE CowTag='{tag}'")))
-        st.metric("Treatment", len(q(f"SELECT * FROM TreatmentLogs WHERE AnimalTag='{tag}'")))
+        st.write("Vaccination:", len(q(f"SELECT * FROM VaccineLogs WHERE AnimalTag='{tag}'")))
+        st.write("Breeding:", len(q(f"SELECT * FROM BreedingLogs WHERE CowTag='{tag}'")))
+        st.write("Calving:", len(q(f"SELECT * FROM CalvingLogs WHERE CowTag='{tag}'")))
+        st.write("Treatment:", len(q(f"SELECT * FROM TreatmentLogs WHERE AnimalTag='{tag}'")))
 
 # ================= 2 ALL ANIMALS =================
 with tabs[1]:
@@ -113,7 +113,7 @@ with tabs[2]:
         method = st.selectbox("Method", ["AI","Natural","ET","Sync"])
         vet = st.text_input("Vet")
 
-        if st.button("Save Breeding"):
+        if st.button("Save"):
             execq("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)",
                   (str(date.today()), cow, sire, semen, method, vet))
             st.success("Saved")
@@ -129,7 +129,7 @@ with tabs[3]:
         gender = st.selectbox("Calf Gender", ["Male","Female"])
         weight = st.number_input("Calf Weight")
 
-        if st.button("Save Calving"):
+        if st.button("Save"):
             execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?)",
                   (str(date.today()), cow, str(calving_date), sire, gender, weight))
             st.success("Saved")
@@ -139,12 +139,12 @@ with tabs[4]:
     st.subheader("💉 Vaccination")
 
     if tags:
-        animal = st.selectbox("Animal", tags, key="vac")
+        animal = st.selectbox("Animal", tags)
         vaccine = st.text_input("Vaccine")
         dose = st.text_input("Dose")
         vet = st.text_input("Vet")
 
-        if st.button("Save Vaccine"):
+        if st.button("Save"):
             execq("INSERT INTO VaccineLogs VALUES (?,?,?,?,?)",
                   (str(date.today()), animal, vaccine, dose, vet))
             st.success("Saved")
@@ -154,12 +154,12 @@ with tabs[5]:
     st.subheader("🩺 Treatment")
 
     if tags:
-        animal = st.selectbox("Animal", tags, key="treat")
+        animal = st.selectbox("Animal", tags)
         disease = st.text_input("Disease")
         medicine = st.text_input("Medicine")
         vet = st.text_input("Vet")
 
-        if st.button("Save Treatment"):
+        if st.button("Save"):
             execq("INSERT INTO TreatmentLogs VALUES (?,?,?,?,?)",
                   (str(date.today()), animal, disease, medicine, vet))
             st.success("Saved")
@@ -169,7 +169,7 @@ with tabs[6]:
     st.subheader("🏥 Hospital (Death + Culling)")
 
     if tags:
-        animal = st.selectbox("Animal", tags, key="hos")
+        animal = st.selectbox("Animal", tags)
         action = st.selectbox("Action", ["Recover","Death","Culling"])
         reason = st.text_input("Reason")
 
@@ -187,17 +187,12 @@ with tabs[6]:
 
             st.success("Updated")
 
-# ================= 8 INVENTORY =================
+# ================= 8 MOVEMENT =================
 with tabs[7]:
-    st.subheader("📦 Inventory")
-    st.dataframe(q("SELECT * FROM sqlite_master WHERE type='table'"))
-
-# ================= 9 MOVEMENT =================
-with tabs[8]:
     st.subheader("🚚 Movement")
 
     if tags:
-        animal = st.selectbox("Animal", tags, key="move")
+        animal = st.selectbox("Animal", tags)
         pen = st.text_input("Pen")
 
         if st.button("Move"):
@@ -205,19 +200,18 @@ with tabs[8]:
                   (str(date.today()), animal, pen))
             st.success("Moved")
 
-# ================= 10 REPORTS =================
-with tabs[9]:
+# ================= 9 REPORTS =================
+with tabs[8]:
     st.subheader("📊 Reports")
 
-    st.write("Total Animals:", len(animals))
+    st.metric("Total Animals", len(animals))
+    st.metric("Healthy", len(animals[animals["Status"]=="Healthy"]))
+    st.metric("Dead", len(animals[animals["Status"]=="Dead"]))
+    st.metric("Culled", len(animals[animals["Status"]=="Culled"]))
 
-    st.write("Healthy:", len(animals[animals.get("Status","")=="Healthy"]))
-    st.write("Dead:", len(animals[animals.get("Status","")=="Dead"]))
-
-# ================= 11 DASHBOARD =================
-with tabs[10]:
+# ================= 10 DASHBOARD =================
+with tabs[9]:
     st.subheader("📈 Dashboard")
 
     st.metric("Total Animals", len(animals))
-    st.metric("Active", len(animals))
-    st.metric("System Status", "RUNNING")
+    st.metric("Active System", "RUNNING")
