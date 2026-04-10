@@ -4,34 +4,30 @@ import sqlite3
 from datetime import date
 import os
 
-# --- 0. DATABASE INITIALIZATION (Yahan se Replace Karein) ---
-def init_livestock_db():
-    with db_connect() as conn:
-        # 1. Pehle check karein ke purana table TagID ke baghair toh nahi?
-        try:
-            conn.execute("SELECT TagID FROM AnimalMaster LIMIT 1")
-        except:
-            # Agar TagID missing hai, toh table ko fresh reset karein
-            conn.execute("DROP TABLE IF EXISTS AnimalMaster")
-        
-        # 2. Ab table ko sahi columns (TagID ke sath) create karein
-        conn.execute("""CREATE TABLE IF NOT EXISTS AnimalMaster (
-            TagID TEXT PRIMARY KEY, RFID TEXT, Breed TEXT, Category TEXT, CurrentPen TEXT, 
-            Weight REAL DEFAULT 0, Status TEXT DEFAULT 'Active', LactationNo INTEGER DEFAULT 0,
-            BirthDate TEXT, Sire1 TEXT, Sire2 TEXT, LastWeight REAL DEFAULT 0)""")
-        
-        # 3. Baaki logs tables
-        conn.execute("CREATE TABLE IF NOT EXISTS MilkLogs (Date TEXT, TagID TEXT, Morning REAL, Noon REAL, Evening REAL, Total REAL)")
-        conn.execute("CREATE TABLE IF NOT EXISTS TreatmentLogs (Date TEXT, TagID TEXT, Med1 TEXT, Qty1 REAL, UOM1 TEXT, Med2 TEXT, Qty2 REAL, UOM2 TEXT, Med3 TEXT, Qty3 REAL, UOM3 TEXT, Med4 TEXT, Qty4 REAL, UOM4 TEXT, Symptoms TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS BreedingLogs (Date TEXT, TagID TEXT, Action TEXT, HeatStatus TEXT, SemenName TEXT, DoseQty INTEGER, PD_Result TEXT, Vet TEXT, ExpCalving TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS CalvingLogs (Date TEXT, DamID TEXT, Result TEXT, Type TEXT, Calf1_Tag TEXT, Calf1_Sex TEXT, Calf2_Tag TEXT, Calf2_Sex TEXT, Calf1_W REAL, Calf2_W REAL, LactNo INTEGER)")
-        conn.execute("CREATE TABLE IF NOT EXISTS WeightLogs (Date TEXT, TagID TEXT, CurrentWeight REAL, PreviousWeight REAL, Gain REAL, DaysGap INTEGER, AvgDailyGain REAL)")
-        conn.execute("CREATE TABLE IF NOT EXISTS MoveLogs (Date TEXT, TagID TEXT, FromPen TEXT, ToPen TEXT, Reason TEXT)")
-        conn.execute("CREATE TABLE IF NOT EXISTS VacLogs (Date TEXT, TagIDs TEXT, VaccineName TEXT, Dose REAL, Batch TEXT)")
-        conn.commit()
+# ================= DATABASE =================
+DB_PATH = os.path.join(os.path.dirname(__file__), "Zuni.db")
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 
-init_livestock_db() # Yeh line lazmi honi chahiye
+def q(sql, params=()):
+    return pd.read_sql_query(sql, conn, params=params)
 
+def execq(sql, params=()):
+    conn.execute(sql, params)
+    conn.commit()
+
+# ================= INIT =================
+def setup():
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS AnimalMaster (
+        TagID TEXT PRIMARY KEY,
+        Category TEXT,
+        Breed TEXT,
+        Status TEXT,
+        Weight REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS BreedingLogs (
+        Date TEXT, CowTag TEXT, Type TEXT, Semen TEXT, Protocol TEXT, Vet TEXT
     );
 
     CREATE TABLE IF NOT EXISTS CalvingLogs (
@@ -107,6 +103,7 @@ with tabs[1]:
     st.subheader("All Animals")
     st.dataframe(animals, use_container_width=True)
 
+# ================= 3 BREEDING =================
 with tabs[2]:
     st.subheader("🧬 Breeding (PRO)")
 
@@ -115,53 +112,19 @@ with tabs[2]:
 
         protocol = st.selectbox(
             "Protocol",
-            ["Heat Detected", "Natural Bull Mate", "AI", "PD Check", "Dry", "Fresh"],
+            ["Heat Detected", "Natural", "AI", "PD Check", "Dry", "Fresh"],
             key="b2"
         )
 
         breed_type = st.selectbox("Type", ["AI", "Natural"], key="b3")
 
-        vet = st.text_input("Vet Name", key="b4")
+        semen = st.text_input("Semen Name", key="b4")
+        vet = st.text_input("Vet", key="b5")
 
-        bull_tag = None
-        semen_name = None
-
-        # ================= AI MODE =================
-        if breed_type == "AI":
-            st.markdown("### 🧪 AI Breeding")
-
-            semen_name = st.text_input("Semen Name", key="ai_semen")
-
-            st.info("AI Mode Active → Semen will be used")
-
-        # ================= NATURAL MODE =================
-        else:
-            st.markdown("### 🐂 Natural Bull Mate")
-
-            # future-proof: bull list from animals
-            bulls = q("SELECT TagID FROM AnimalMaster WHERE Category='Bull'") if "Category" in animals.columns else pd.DataFrame()
-
-            bull_list = bulls["TagID"].tolist() if not bulls.empty else ["BULL001", "BULL002"]
-
-            bull_tag = st.selectbox("Select Bull Tag", bull_list, key="bull_select")
-
-            st.info("Natural mating selected → Bull Tag required")
-
-        # ================= SAVE =================
-        if st.button("Save Breeding", key="b_save"):
-
-            execq("""
-            INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)
-            """, (
-                str(date.today()),
-                cow,
-                breed_type,
-                semen_name if semen_name else bull_tag,
-                protocol,
-                vet
-            ))
-
-            st.success("Breeding Saved ✔")
+        if st.button("Save Breeding", key="b6"):
+            execq("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)",
+                  (str(date.today()), cow, breed_type, semen, protocol, vet))
+            st.success("Saved")
 
 # ================= 4 CALVING =================
 with tabs[3]:
