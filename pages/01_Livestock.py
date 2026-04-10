@@ -103,28 +103,107 @@ with tabs[1]:
     st.subheader("All Animals")
     st.dataframe(animals, use_container_width=True)
 
-# ================= 3 BREEDING =================
 with tabs[2]:
-    st.subheader("🧬 Breeding (PRO)")
+    st.subheader("🧬 PRO BREEDING MODULE")
 
     if tags:
-        cow = st.selectbox("Cow", tags, key="b1")
 
-        protocol = st.selectbox(
-            "Protocol",
-            ["Heat Detected", "Natural", "AI", "PD Check", "Dry", "Fresh"],
-            key="b2"
+        # ================= SELECT COW =================
+        cow = st.selectbox("Select Cow", tags, key="cow_main")
+
+        # ================= COW DATA =================
+        cow_data = animals[animals["TagID"] == cow]
+
+        st.markdown("### 📋 Cow Profile")
+        st.dataframe(cow_data)
+
+        # ================= HEAT INFO =================
+        heat_type = st.selectbox(
+            "Heat Type",
+            ["Standing Heat", "Silent Heat", "Repeat Heat"],
+            key="heat"
         )
 
-        breed_type = st.selectbox("Type", ["AI", "Natural"], key="b3")
+        heat_strength = st.slider("Heat Strength (1-5)", 1, 5, 3, key="heat_strength")
 
-        semen = st.text_input("Semen Name", key="b4")
-        vet = st.text_input("Vet", key="b5")
+        # ================= BREEDING TYPE =================
+        breed_type = st.selectbox("Breeding Type", ["AI", "Natural"], key="breed_type")
 
-        if st.button("Save Breeding", key="b6"):
-            execq("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)",
-                  (str(date.today()), cow, breed_type, semen, protocol, vet))
-            st.success("Saved")
+        semen_or_bull = None
+
+        # ================= AI =================
+        if breed_type == "AI":
+            st.markdown("### 🧪 AI MODE")
+
+            semen_or_bull = st.text_input("Semen Name", key="semen")
+
+            straw_qty = st.number_input("Straw Qty", 1, 10, 1, key="straw")
+
+        # ================= NATURAL =================
+        else:
+            st.markdown("### 🐂 NATURAL MODE")
+
+            bulls = q("SELECT TagID FROM AnimalMaster WHERE Category='Bull'")
+
+            bull_list = bulls["TagID"].tolist() if not bulls.empty else ["BULL001"]
+
+            semen_or_bull = st.selectbox("Select Bull", bull_list, key="bull")
+
+        # ================= VET =================
+        vet = st.text_input("Vet Name", key="vet")
+
+        # ================= FERTILITY SCORE =================
+        st.markdown("### 🧠 Fertility Score")
+
+        score = (heat_strength * 20)
+
+        if cow_data.shape[0] > 0:
+            if cow_data.iloc[0]["Status"] == "Healthy":
+                score += 20
+            if cow_data.iloc[0]["Weight"] > 350:
+                score += 20
+
+        score = min(score, 100)
+
+        if score >= 80:
+            st.success(f"🟢 Excellent Fertility Score: {score}")
+        elif score >= 50:
+            st.warning(f"🟡 Medium Fertility Score: {score}")
+        else:
+            st.error(f"🔴 Low Fertility Score: {score}")
+
+        # ================= SAVE BREEDING =================
+        if st.button("Save Breeding Record", key="save_breed"):
+
+            execq("""
+            INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)
+            """, (
+                str(date.today()),
+                cow,
+                breed_type,
+                semen_or_bull,
+                heat_type,
+                vet
+            ))
+
+            st.success("Breeding Saved ✔")
+
+        # ================= PD SECTION =================
+        st.markdown("### 🧪 Pregnancy Diagnosis (PD)")
+
+        pd_result = st.selectbox("PD Result", ["Not Done", "Pregnant", "Open"], key="pd")
+
+        if pd_result == "Pregnant":
+
+            expected_calving = pd.to_datetime(date.today()) + pd.Timedelta(days=280)
+
+            st.info(f"📅 Expected Calving Date: {expected_calving.date()}")
+
+        # ================= HISTORY =================
+        st.markdown("### 📊 Breeding History")
+
+        history = q("SELECT * FROM BreedingLogs WHERE CowTag=?", (cow,))
+        st.dataframe(history)
 
 # ================= 4 CALVING =================
 with tabs[3]:
