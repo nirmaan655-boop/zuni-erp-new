@@ -147,4 +147,13 @@ with tab_a:
             with db_connect() as conn:
                 conn.execute("DELETE FROM ChartOfAccounts WHERE AccountName = ?", (sel_a,))
                 conn.commit()
-            st.rerun()
+def init_vendor():
+    with db_connect() as conn:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS VendorMaster (
+            VendorName TEXT PRIMARY KEY
+        )
+        """)
+        conn.commit()
+
+init_vendor()            st.rerun()
