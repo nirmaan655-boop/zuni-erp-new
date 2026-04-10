@@ -5,10 +5,13 @@ from zuni_db import db_connect, fetch_df
 
 st.set_page_config(layout="wide")
 
-# ---------------- DB HELPERS ----------------
+# ---------------- SAFE DB ----------------
 def q(sql, params=None):
-    with db_connect() as conn:
-        return fetch_df(conn, sql, params)
+    try:
+        with db_connect() as conn:
+            return fetch_df(conn, sql, params)
+    except:
+        return pd.DataFrame()
 
 def execq(sql, params=None):
     with db_connect() as conn:
@@ -21,65 +24,69 @@ animals = q("SELECT * FROM AnimalMaster")
 if animals.empty:
     animals = pd.DataFrame(columns=["TagID","Status","Category","Weight"])
 
-tags = animals["TagID"].astype(str).tolist()
+tags = animals["TagID"].tolist()
 
-st.title("🐄 HRM Dairy ERP - FINAL PROFESSIONAL SYSTEM")
+st.title("🐄 HRM Dairy ERP - COMPLETE LIVESTOCK SYSTEM")
 
-# ---------------- SEARCH ----------------
 search = st.text_input("🔍 Search Animal")
 
 if search:
-    animals = animals[animals.apply(lambda x: x.astype(str).str.contains(search, case=False).any(), axis=1)]
+    animals = animals[animals.astype(str).apply(lambda x: x.str.contains(search, case=False).any(), axis=1)]
 
 # ---------------- TABS ----------------
 tabs = st.tabs([
-    "Cow Card","Breeding","Treatment","Hospital","Calving",
-    "Weight","Inventory","Movement","Culling","Death","Reports"
+    "Cow Card","All Animals","Breeding","Treatment",
+    "Hospital","Calving","Weight","Inventory",
+    "Movement","Reports","Dashboard"
 ])
 
 # ================= 1 COW CARD =================
 with tabs[0]:
-    tag = st.selectbox("Animal", tags, key="cow")
+    tag = st.selectbox("Select Animal", tags)
 
     st.dataframe(animals[animals["TagID"]==tag])
 
-# ================= 2 BREEDING =================
+# ================= 2 ALL ANIMALS =================
 with tabs[1]:
+    st.dataframe(animals)
+
+# ================= 3 BREEDING =================
+with tabs[2]:
     tag = st.selectbox("Cow", tags, key="breed")
 
-    protocol = st.selectbox("Protocol", [
-        "Natural","AI","Fixed Time AI","Heat Sync","Observation"
-    ])
+    protocol = st.selectbox("Protocol", ["Natural","AI","F-T-AI","Heat Sync"])
 
-    straw = q("SELECT ItemName FROM Inventory WHERE Type='Semen'")
-    straw_item = st.selectbox("Semen Straw", straw["ItemName"] if not straw.empty else [])
+    bulls = q("SELECT TagID FROM AnimalMaster WHERE Category='Bull'")
+    bull = st.selectbox("Bull", bulls["TagID"] if not bulls.empty else [])
 
-    bull = q("SELECT TagID FROM AnimalMaster WHERE Category='Bull'")
-    bull_id = st.selectbox("Bull Tag", bull["TagID"] if not bull.empty else [])
+    semen_df = q("SELECT * FROM Inventory")
+    semen = semen_df[semen_df.get("Type","")=="Semen"]["ItemName"].tolist() if not semen_df.empty else []
 
-    heat = st.selectbox("Heat Status", ["Observed","Not Observed"])
+    straw = st.selectbox("Semen Straw", semen)
 
     vet = st.text_input("Vet Name")
 
     if st.button("Save Breeding"):
         execq("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)",
-              (str(date.today()), tag, protocol, straw_item, bull_id, vet))
+              (str(date.today()), tag, protocol, straw, bull, vet))
 
-        if straw_item:
-            execq("UPDATE Inventory SET Qty=Qty-1 WHERE ItemName=?", (straw_item,))
+        if straw:
+            execq("UPDATE Inventory SET Qty=Qty-1 WHERE ItemName=?", (straw,))
 
-# ================= 3 TREATMENT =================
-with tabs[2]:
+# ================= 4 TREATMENT =================
+with tabs[3]:
     tag = st.selectbox("Animal", tags, key="treat")
 
     disease = st.text_input("Disease")
 
-    meds = q("SELECT ItemName FROM Inventory WHERE Type='Medicine'")
-    selected = st.multiselect("Medicines (3-4 allowed)", meds["ItemName"] if not meds.empty else [])
+    meds_df = q("SELECT * FROM Inventory")
+    meds = meds_df[meds_df.get("Type","")=="Medicine"]["ItemName"].tolist() if not meds_df.empty else []
 
-    vet = st.text_input("Vet")
+    selected = st.multiselect("Medicines", meds)
 
     status = st.selectbox("Status", ["Sick","Under Treatment","Recovered"])
+
+    vet = st.text_input("Vet")
 
     if st.button("Save Treatment"):
         execq("INSERT INTO TreatmentLogs VALUES (?,?,?,?,?)",
@@ -90,47 +97,49 @@ with tabs[2]:
 
         execq("UPDATE AnimalMaster SET Status=? WHERE TagID=?", (status, tag))
 
-# ================= 4 HOSPITAL =================
-with tabs[3]:
-    st.subheader("🏥 Hospital Animals")
+# ================= 5 HOSPITAL (DEATH + CULLING) =================
+with tabs[4]:
+    st.subheader("🏥 Hospital Management")
 
     hospital = q("SELECT * FROM AnimalMaster WHERE Status IN ('Sick','Hospital')")
     st.dataframe(hospital)
 
-    recover = st.selectbox("Recover Animal", hospital["TagID"] if not hospital.empty else [])
+    st.markdown("### ⚠️ Critical Actions")
 
-    if st.button("Mark Recovered"):
-        execq("UPDATE AnimalMaster SET Status='Healthy' WHERE TagID=?", (recover,))
+    tag = st.selectbox("Animal", tags, key="hospital")
 
-# ================= 5 CALVING (FULL) =================
-with tabs[4]:
-    dam = st.selectbox("Dam", tags, key="calv")
+    action = st.selectbox("Action", ["Recover","Culling","Death"])
+
+    reason = st.text_input("Reason")
+
+    if st.button("Execute Action"):
+        if action == "Recover":
+            execq("UPDATE AnimalMaster SET Status='Healthy' WHERE TagID=?", (tag,))
+
+        elif action == "Culling":
+            execq("UPDATE AnimalMaster SET Status='Culled' WHERE TagID=?", (tag,))
+            execq("INSERT INTO CullingLogs VALUES (?,?,?)", (str(date.today()), tag, reason))
+
+        elif action == "Death":
+            execq("UPDATE AnimalMaster SET Status='Dead' WHERE TagID=?", (tag,))
+            execq("INSERT INTO DeathLogs VALUES (?,?,?)", (str(date.today()), tag, reason))
+
+# ================= 6 CALVING =================
+with tabs[5]:
+    dam = st.selectbox("Dam", tags, key="calving")
 
     calving_date = st.date_input("Calving Date")
-    sire = st.text_input("Sire / Bull Tag")
+    sire = st.text_input("Sire")
 
-    calf_count = st.selectbox("Calves", ["Single","Twins"])
-
-    calf1_weight = st.number_input("Calf 1 Weight")
-    calf1_gender = st.selectbox("Calf 1 Gender", ["Male","Female"])
-
-    calf2_weight = 0
-    calf2_gender = ""
-
-    if calf_count == "Twins":
-        calf2_weight = st.number_input("Calf 2 Weight")
-        calf2_gender = st.selectbox("Calf 2 Gender", ["Male","Female"])
+    calf_gender = st.selectbox("Calf Gender", ["Male","Female"])
+    calf_weight = st.number_input("Calf Weight")
 
     if st.button("Save Calving"):
-        execq("""INSERT INTO CalvingLogs 
-              VALUES (?,?,?,?,?,?,?,?,?)""",
-              (str(date.today()), dam, str(calving_date),
-               sire, calf_count,
-               calf1_weight, calf1_gender,
-               calf2_weight, calf2_gender))
+        execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?)",
+              (str(date.today()), dam, str(calving_date), sire, calf_gender))
 
-# ================= 6 WEIGHT =================
-with tabs[5]:
+# ================= 7 WEIGHT =================
+with tabs[6]:
     tag = st.selectbox("Animal", tags, key="weight")
 
     w = st.number_input("Weight")
@@ -141,15 +150,13 @@ with tabs[5]:
 
         execq("UPDATE AnimalMaster SET Weight=? WHERE TagID=?", (w, tag))
 
-# ================= 7 INVENTORY =================
-with tabs[6]:
-    st.subheader("Inventory Stock")
-
+# ================= 8 INVENTORY =================
+with tabs[7]:
     inv = q("SELECT * FROM Inventory")
     st.dataframe(inv)
 
-# ================= 8 MOVEMENT =================
-with tabs[7]:
+# ================= 9 MOVEMENT =================
+with tabs[8]:
     tag = st.selectbox("Animal", tags, key="move")
     pen = st.text_input("Pen")
 
@@ -157,39 +164,17 @@ with tabs[7]:
         execq("INSERT INTO MovementLogs VALUES (?,?,?)",
               (str(date.today()), tag, pen))
 
-# ================= 9 CULLING =================
-with tabs[8]:
-    culled = q("SELECT * FROM AnimalMaster WHERE Status='Culled'")
-    st.dataframe(culled)
-
-    tag = st.selectbox("Culling Animal", tags, key="cull")
-
-    if st.button("CULL"):
-        execq("UPDATE AnimalMaster SET Status='Culled' WHERE TagID=?", (tag,))
-
-# ================= 10 DEATH =================
+# ================= 10 REPORTS =================
 with tabs[9]:
-    st.subheader("💀 Death Register")
+    st.subheader("Reports")
 
-    dead = q("SELECT * FROM AnimalMaster WHERE Status='Dead'")
-    st.dataframe(dead)
+    st.dataframe(animals.groupby("Status").size().reset_index(name="Count"))
 
-    tag = st.selectbox("Mark Dead", tags, key="death")
-
-    cause = st.text_input("Cause of Death")
-
-    if st.button("Mark Dead"):
-        execq("UPDATE AnimalMaster SET Status='Dead' WHERE TagID=?", (tag,))
-        execq("INSERT INTO DeathLogs VALUES (?,?,?)",
-              (str(date.today()), tag, cause))
-
-# ================= 11 REPORTS =================
+# ================= 11 DASHBOARD =================
 with tabs[10]:
-    st.subheader("📊 Reports Dashboard")
+    st.subheader("Dashboard")
 
-    milk = q("SELECT Date, SUM(Total) as Milk FROM MilkLogs GROUP BY Date")
-
-    st.dataframe(milk)
-
-    if not milk.empty:
-        st.line_chart(milk.set_index("Date")["Milk"])
+    st.metric("Total Animals", len(animals))
+    st.metric("Active", len(animals[animals["Status"]=="Healthy"]))
+    st.metric("Hospital", len(animals[animals["Status"]=="Sick"]))
+    st.metric("Dead", len(animals[animals["Status"]=="Dead"]))
