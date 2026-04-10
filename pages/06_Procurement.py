@@ -1,41 +1,42 @@
-def auto_fix_animalmaster():
+def auto_fix_database():
     with db_connect() as conn:
 
-        # Table create if not exists (minimum structure)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS AnimalMaster (
-            TagID TEXT PRIMARY KEY
-        )
-        """)
-
-        # Get existing columns
+        # ---- AnimalMaster Fix ----
         cols = [i[1] for i in conn.execute("PRAGMA table_info(AnimalMaster)")]
 
-        # 🔥 FIX 1: Rename old column "Tag" → "TagID"
         if "Tag" in cols and "TagID" not in cols:
             try:
                 conn.execute("ALTER TABLE AnimalMaster RENAME COLUMN Tag TO TagID")
             except:
                 pass
 
-        # Refresh column list
-        cols = [i[1] for i in conn.execute("PRAGMA table_info(AnimalMaster)")]
+        if "Status" not in cols:
+            conn.execute("ALTER TABLE AnimalMaster ADD COLUMN Status TEXT DEFAULT 'Open'")
 
-        # 🔥 FIX 2: Ensure required columns exist
-        required_cols = {
-            "TagID": "TEXT",
-            "Breed": "TEXT",
-            "Category": "TEXT",
-            "Status": "TEXT DEFAULT 'Open'",
-            "PurchasePrice": "REAL DEFAULT 0",
-            "PurchaseDate": "TEXT"
-        }
+        # ---- ItemMaster Fix ----
+        cols = [i[1] for i in conn.execute("PRAGMA table_info(ItemMaster)")]
 
-        for col, dtype in required_cols.items():
-            if col not in cols:
-                try:
-                    conn.execute(f"ALTER TABLE AnimalMaster ADD COLUMN {col} {dtype}")
-                except:
-                    pass
+        if "Store" not in cols:
+            conn.execute("ALTER TABLE ItemMaster ADD COLUMN Store TEXT DEFAULT 'General'")
+
+        if "Quantity" not in cols:
+            conn.execute("ALTER TABLE ItemMaster ADD COLUMN Quantity REAL DEFAULT 0")
+
+        if "Cost" not in cols:
+            conn.execute("ALTER TABLE ItemMaster ADD COLUMN Cost REAL DEFAULT 0")
+
+        # ---- PurchaseLog Fix ----
+        conn.execute('''CREATE TABLE IF NOT EXISTS PurchaseLog(
+            ID INTEGER PRIMARY KEY AUTOINCREMENT,
+            Type TEXT,
+            Ref TEXT,
+            Item TEXT,
+            Qty REAL,
+            Rate REAL,
+            Total REAL,
+            Vendor TEXT,
+            Store TEXT,
+            Date TEXT
+        )''')
 
         conn.commit()
