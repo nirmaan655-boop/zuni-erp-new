@@ -103,7 +103,6 @@ with tabs[1]:
     st.subheader("All Animals")
     st.dataframe(animals, use_container_width=True)
 
-# ================= 3 BREEDING =================
 with tabs[2]:
     st.subheader("🧬 Breeding (PRO)")
 
@@ -112,19 +111,53 @@ with tabs[2]:
 
         protocol = st.selectbox(
             "Protocol",
-            ["Heat Detected", "Natural", "AI", "PD Check", "Dry", "Fresh"],
+            ["Heat Detected", "Natural Bull Mate", "AI", "PD Check", "Dry", "Fresh"],
             key="b2"
         )
 
         breed_type = st.selectbox("Type", ["AI", "Natural"], key="b3")
 
-        semen = st.text_input("Semen Name", key="b4")
-        vet = st.text_input("Vet", key="b5")
+        vet = st.text_input("Vet Name", key="b4")
 
-        if st.button("Save Breeding", key="b6"):
-            execq("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)",
-                  (str(date.today()), cow, breed_type, semen, protocol, vet))
-            st.success("Saved")
+        bull_tag = None
+        semen_name = None
+
+        # ================= AI MODE =================
+        if breed_type == "AI":
+            st.markdown("### 🧪 AI Breeding")
+
+            semen_name = st.text_input("Semen Name", key="ai_semen")
+
+            st.info("AI Mode Active → Semen will be used")
+
+        # ================= NATURAL MODE =================
+        else:
+            st.markdown("### 🐂 Natural Bull Mate")
+
+            # future-proof: bull list from animals
+            bulls = q("SELECT TagID FROM AnimalMaster WHERE Category='Bull'") if "Category" in animals.columns else pd.DataFrame()
+
+            bull_list = bulls["TagID"].tolist() if not bulls.empty else ["BULL001", "BULL002"]
+
+            bull_tag = st.selectbox("Select Bull Tag", bull_list, key="bull_select")
+
+            st.info("Natural mating selected → Bull Tag required")
+
+        # ================= SAVE =================
+        if st.button("Save Breeding", key="b_save"):
+
+            execq("""
+            INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)
+            """, (
+                str(date.today()),
+                cow,
+                breed_type,
+                semen_name if semen_name else bull_tag,
+                protocol,
+                vet
+            ))
+
+            st.success("Breeding Saved ✔")
 
 # ================= 4 CALVING =================
 with tabs[3]:
