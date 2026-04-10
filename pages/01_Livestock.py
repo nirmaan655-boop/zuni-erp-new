@@ -4,7 +4,7 @@ import sqlite3
 from datetime import date
 import os
 
-# ================= DB =================
+# ================= DATABASE =================
 DB_PATH = os.path.join(os.path.dirname(__file__), "Zuni.db")
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -27,11 +27,11 @@ def setup():
     );
 
     CREATE TABLE IF NOT EXISTS BreedingLogs (
-        Date TEXT, CowTag TEXT, Sire TEXT, Semen TEXT, Method TEXT, Vet TEXT
+        Date TEXT, CowTag TEXT, Type TEXT, Semen TEXT, Protocol TEXT, Vet TEXT
     );
 
     CREATE TABLE IF NOT EXISTS CalvingLogs (
-        Date TEXT, CowTag TEXT, CalvingDate TEXT, Sire TEXT,
+        Date TEXT, CowTag TEXT, CalvingDate TEXT, SireTag TEXT,
         CalfGender TEXT, CalfWeight REAL
     );
 
@@ -58,26 +58,15 @@ def setup():
 
     conn.commit()
 
-def seed():
-    df = q("SELECT * FROM AnimalMaster")
-    if df.empty:
-        conn.execute("""
-        INSERT INTO AnimalMaster VALUES
-        ('COW001','Cow','HF','Healthy',420),
-        ('COW002','Cow','Jersey','Healthy',380),
-        ('BUF001','Buffalo','Nili Ravi','Healthy',520)
-        """)
-        conn.commit()
-
 setup()
-seed()
 
+# ================= LOAD =================
 animals = q("SELECT * FROM AnimalMaster")
-tags = animals["TagID"].tolist()
+tags = animals["TagID"].tolist() if not animals.empty else []
 
 # ================= UI =================
 st.set_page_config(layout="wide")
-st.title("🐄 LIVESTOCK ERP PRO (FIXED VERSION)")
+st.title("🐄 LIVESTOCK ERP PRO (FINAL VERSION)")
 
 tabs = st.tabs([
     "🐄 Cow Card",
@@ -97,14 +86,17 @@ tabs = st.tabs([
 with tabs[0]:
     st.subheader("Cow Card")
 
-    tag = st.selectbox("Select Animal", tags, key="card_tag")
+    if tags:
+        tag = st.selectbox("Select Animal", tags, key="card")
 
-    st.dataframe(animals[animals["TagID"] == tag])
+        st.dataframe(animals[animals["TagID"] == tag])
 
-    st.metric("Vaccination", len(q("SELECT * FROM VaccineLogs WHERE AnimalTag=?", (tag,))))
-    st.metric("Breeding", len(q("SELECT * FROM BreedingLogs WHERE CowTag=?", (tag,))))
-    st.metric("Calving", len(q("SELECT * FROM CalvingLogs WHERE CowTag=?", (tag,))))
-    st.metric("Treatment", len(q("SELECT * FROM TreatmentLogs WHERE AnimalTag=?", (tag,))))
+        st.metric("Vaccination", len(q("SELECT * FROM VaccineLogs WHERE AnimalTag=?", (tag,))))
+        st.metric("Breeding", len(q("SELECT * FROM BreedingLogs WHERE CowTag=?", (tag,))))
+        st.metric("Calving", len(q("SELECT * FROM CalvingLogs WHERE CowTag=?", (tag,))))
+        st.metric("Treatment", len(q("SELECT * FROM TreatmentLogs WHERE AnimalTag=?", (tag,))))
+    else:
+        st.warning("No Animals Found. Add via Procurement Module.")
 
 # ================= 2 ALL ANIMALS =================
 with tabs[1]:
@@ -113,103 +105,137 @@ with tabs[1]:
 
 # ================= 3 BREEDING =================
 with tabs[2]:
-    st.subheader("Breeding")
+    st.subheader("🧬 Breeding (PRO)")
 
-    cow = st.selectbox("Cow", tags, key="breed_cow")
-    sire = st.text_input("Sire", key="breed_sire")
-    semen = st.text_input("Semen", key="breed_semen")
-    method = st.selectbox("Method", ["AI","Natural","ET"], key="breed_method")
-    vet = st.text_input("Vet", key="breed_vet")
+    if tags:
+        cow = st.selectbox("Cow", tags, key="b1")
 
-    if st.button("Save Breeding", key="breed_btn"):
-        execq("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)",
-              (str(date.today()), cow, sire, semen, method, vet))
-        st.success("Saved")
+        protocol = st.selectbox(
+            "Protocol",
+            ["Heat Detected", "Natural", "AI", "PD Check", "Dry", "Fresh"],
+            key="b2"
+        )
+
+        breed_type = st.selectbox("Type", ["AI", "Natural"], key="b3")
+
+        semen = st.text_input("Semen Name", key="b4")
+        vet = st.text_input("Vet", key="b5")
+
+        if st.button("Save Breeding", key="b6"):
+            execq("INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)",
+                  (str(date.today()), cow, breed_type, semen, protocol, vet))
+            st.success("Saved")
 
 # ================= 4 CALVING =================
 with tabs[3]:
-    st.subheader("Calving")
+    st.subheader("🐣 Calving (TWINS ENABLED)")
 
-    cow = st.selectbox("Cow", tags, key="calv_cow")
-    calving_date = st.date_input("Calving Date", key="calv_date")
-    sire = st.text_input("Sire", key="calv_sire")
-    gender = st.selectbox("Calf Gender", ["Male","Female"], key="calv_gender")
-    weight = st.number_input("Calf Weight", key="calv_weight")
+    if tags:
+        cow = st.selectbox("Cow", tags, key="c1")
 
-    if st.button("Save Calving", key="calv_btn"):
-        execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?)",
-              (str(date.today()), cow, str(calving_date), sire, gender, weight))
-        st.success("Saved")
+        calving_date = st.date_input("Calving Date", key="c2")
+        sire = st.text_input("Sire Tag", key="c3")
 
-# ================= 5 VACCINATION =================
+        twins = st.checkbox("Twins", key="c4")
+
+        st.markdown("### Calf 1")
+        g1 = st.selectbox("Gender", ["Male","Female"], key="c5")
+        w1 = st.number_input("Weight", key="c6")
+
+        g2 = None
+        w2 = None
+
+        if twins:
+            st.markdown("### Calf 2")
+            g2 = st.selectbox("Gender 2", ["Male","Female"], key="c7")
+            w2 = st.number_input("Weight 2", key="c8")
+
+        if st.button("Save Calving", key="c9"):
+
+            execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?)",
+                  (str(date.today()), cow, str(calving_date), sire, g1, w1))
+
+            if twins:
+                execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?)",
+                      (str(date.today()), cow, str(calving_date), sire, g2, w2))
+
+            execq("UPDATE AnimalMaster SET Status='Fresh' WHERE TagID=?", (cow,))
+
+            st.success("Saved")
+
+# ================= 5 VACCINE =================
 with tabs[4]:
     st.subheader("Vaccination")
 
-    animal = st.selectbox("Animal", tags, key="vac_animal")
-    vaccine = st.text_input("Vaccine", key="vac_vaccine")
-    dose = st.text_input("Dose", key="vac_dose")
-    vet = st.text_input("Vet", key="vac_vet")
+    if tags:
+        a = st.selectbox("Animal", tags, key="v1")
+        v = st.text_input("Vaccine", key="v2")
+        d = st.text_input("Dose", key="v3")
+        vet = st.text_input("Vet", key="v4")
 
-    if st.button("Save Vaccine", key="vac_btn"):
-        execq("INSERT INTO VaccineLogs VALUES (?,?,?,?,?)",
-              (str(date.today()), animal, vaccine, dose, vet))
-        st.success("Saved")
+        if st.button("Save", key="v5"):
+            execq("INSERT INTO VaccineLogs VALUES (?,?,?,?,?)",
+                  (str(date.today()), a, v, d, vet))
+            st.success("Saved")
 
 # ================= 6 TREATMENT =================
 with tabs[5]:
     st.subheader("Treatment")
 
-    animal = st.selectbox("Animal", tags, key="treat_animal")
-    disease = st.text_input("Disease", key="treat_disease")
-    medicine = st.text_input("Medicine", key="treat_medicine")
-    vet = st.text_input("Vet", key="treat_vet")
+    if tags:
+        a = st.selectbox("Animal", tags, key="t1")
+        dis = st.text_input("Disease", key="t2")
+        med = st.text_input("Medicine", key="t3")
+        vet = st.text_input("Vet", key="t4")
 
-    if st.button("Save Treatment", key="treat_btn"):
-        execq("INSERT INTO TreatmentLogs VALUES (?,?,?,?,?)",
-              (str(date.today()), animal, disease, medicine, vet))
-        st.success("Saved")
+        if st.button("Save", key="t5"):
+            execq("INSERT INTO TreatmentLogs VALUES (?,?,?,?,?)",
+                  (str(date.today()), a, dis, med, vet))
+            st.success("Saved")
 
 # ================= 7 HOSPITAL =================
 with tabs[6]:
     st.subheader("Hospital")
 
-    animal = st.selectbox("Animal", tags, key="hos_animal")
-    action = st.selectbox("Action", ["Recover","Death","Culling"], key="hos_action")
-    reason = st.text_input("Reason", key="hos_reason")
+    if tags:
+        a = st.selectbox("Animal", tags, key="h1")
+        act = st.selectbox("Action", ["Recover","Death","Culling"], key="h2")
+        r = st.text_input("Reason", key="h3")
 
-    if st.button("Execute", key="hos_btn"):
-        if action == "Death":
-            execq("INSERT INTO DeathLogs VALUES (?,?,?)",
-                  (str(date.today()), animal, reason))
-            execq("UPDATE AnimalMaster SET Status='Dead' WHERE TagID=?", (animal,))
+        if st.button("Execute", key="h4"):
+            if act == "Death":
+                execq("INSERT INTO DeathLogs VALUES (?,?,?)",
+                      (str(date.today()), a, r))
+                execq("UPDATE AnimalMaster SET Status='Dead' WHERE TagID=?", (a,))
 
-        elif action == "Culling":
-            execq("INSERT INTO CullingLogs VALUES (?,?,?)",
-                  (str(date.today()), animal, reason))
-            execq("UPDATE AnimalMaster SET Status='Culled' WHERE TagID=?", (animal,))
+            elif act == "Culling":
+                execq("INSERT INTO CullingLogs VALUES (?,?,?)",
+                      (str(date.today()), a, r))
+                execq("UPDATE AnimalMaster SET Status='Culled' WHERE TagID=?", (a,))
 
-        else:
-            execq("UPDATE AnimalMaster SET Status='Healthy' WHERE TagID=?", (animal,))
+            else:
+                execq("UPDATE AnimalMaster SET Status='Healthy' WHERE TagID=?", (a,))
 
-        st.success("Updated")
+            st.success("Done")
 
 # ================= 8 MOVEMENT =================
 with tabs[7]:
     st.subheader("Movement")
 
-    animal = st.selectbox("Animal", tags, key="mov_animal")
-    pen = st.text_input("Pen", key="mov_pen")
+    if tags:
+        a = st.selectbox("Animal", tags, key="m1")
+        p = st.text_input("Pen", key="m2")
 
-    if st.button("Move", key="mov_btn"):
-        execq("INSERT INTO MovementLogs VALUES (?,?,?)",
-              (str(date.today()), animal, pen))
-        st.success("Moved")
+        if st.button("Move", key="m3"):
+            execq("INSERT INTO MovementLogs VALUES (?,?,?)",
+                  (str(date.today()), a, p))
+            st.success("Moved")
 
 # ================= 9 REPORTS =================
 with tabs[8]:
     st.subheader("Reports")
 
-    st.metric("Total Animals", len(animals))
+    st.metric("Total", len(animals))
     st.metric("Healthy", len(animals[animals["Status"]=="Healthy"]))
     st.metric("Dead", len(animals[animals["Status"]=="Dead"]))
     st.metric("Culled", len(animals[animals["Status"]=="Culled"]))
@@ -217,24 +243,24 @@ with tabs[8]:
 # ================= 10 DASHBOARD =================
 with tabs[9]:
     st.subheader("Dashboard")
-
     st.success("System Running Perfect")
-    st.metric("Total Animals", len(animals))
+    st.metric("Animals", len(animals))
 
 # ================= 11 FULL HISTORY =================
 with tabs[10]:
     st.subheader("Full History")
 
-    animal = st.selectbox("Select Animal", tags, key="hist_animal")
+    if tags:
+        a = st.selectbox("Animal", tags, key="f1")
 
-    st.write("Vaccination")
-    st.dataframe(q("SELECT * FROM VaccineLogs WHERE AnimalTag=?", (animal,)))
+        st.write("Breeding")
+        st.dataframe(q("SELECT * FROM BreedingLogs WHERE CowTag=?", (a,)))
 
-    st.write("Breeding")
-    st.dataframe(q("SELECT * FROM BreedingLogs WHERE CowTag=?", (animal,)))
+        st.write("Calving")
+        st.dataframe(q("SELECT * FROM CalvingLogs WHERE CowTag=?", (a,)))
 
-    st.write("Calving")
-    st.dataframe(q("SELECT * FROM CalvingLogs WHERE CowTag=?", (animal,)))
+        st.write("Vaccination")
+        st.dataframe(q("SELECT * FROM VaccineLogs WHERE AnimalTag=?", (a,)))
 
-    st.write("Treatment")
-    st.dataframe(q("SELECT * FROM TreatmentLogs WHERE AnimalTag=?", (animal,)))
+        st.write("Treatment")
+        st.dataframe(q("SELECT * FROM TreatmentLogs WHERE AnimalTag=?", (a,)))
