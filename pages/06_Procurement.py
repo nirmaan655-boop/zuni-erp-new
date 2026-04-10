@@ -4,72 +4,81 @@ from zuni_db import db_connect, fetch_df
 from datetime import datetime
 
 # ===============================
-# 0. DATABASE INIT (FULL SAFE)
+# 0. SAFE DATABASE INIT (NO DATA LOSS)
 # ===============================
 def init_db():
     with db_connect() as conn:
 
-        # ANIMAL MASTER (PROCUREMENT + LIVESTOCK SYNC)
-        conn.execute('''CREATE TABLE IF NOT EXISTS AnimalMaster (
-            TagID TEXT PRIMARY KEY,
-            Breed TEXT,
-            Category TEXT,
-            Status TEXT DEFAULT 'Active',
-            CurrentPen TEXT DEFAULT 'GENERAL',
-            Weight REAL DEFAULT 0,
-            PurchasePrice REAL DEFAULT 0,
-            PurchaseDate TEXT
-        )''')
+        # ANIMAL MASTER
+        conn.execute("CREATE TABLE IF NOT EXISTS AnimalMaster (TagID TEXT PRIMARY KEY)")
+        cols = [i[1] for i in conn.execute("PRAGMA table_info(AnimalMaster)")]
 
-        # LIVESTOCK MASTER (AUTO SYNC TABLE)
-        conn.execute('''CREATE TABLE IF NOT EXISTS LivestockMaster (
+        if "Breed" not in cols:
+            conn.execute("ALTER TABLE AnimalMaster ADD COLUMN Breed TEXT")
+        if "Category" not in cols:
+            conn.execute("ALTER TABLE AnimalMaster ADD COLUMN Category TEXT")
+        if "Status" not in cols:
+            conn.execute("ALTER TABLE AnimalMaster ADD COLUMN Status TEXT DEFAULT 'Open'")
+        if "PurchasePrice" not in cols:
+            conn.execute("ALTER TABLE AnimalMaster ADD COLUMN PurchasePrice REAL")
+        if "PurchaseDate" not in cols:
+            conn.execute("ALTER TABLE AnimalMaster ADD COLUMN PurchaseDate TEXT")
+
+        # LIVESTOCK AUTO SYNC TABLE
+        conn.execute("""CREATE TABLE IF NOT EXISTS LivestockMaster (
             TagID TEXT PRIMARY KEY,
             Breed TEXT,
             Category TEXT,
             Status TEXT,
             EntryDate TEXT
-        )''')
+        )""")
 
         # ITEM MASTER
-        conn.execute('''CREATE TABLE IF NOT EXISTS ItemMaster (
+        conn.execute("""CREATE TABLE IF NOT EXISTS ItemMaster (
             ItemName TEXT PRIMARY KEY,
             Category TEXT,
             UOM TEXT,
             Quantity REAL DEFAULT 0,
             Cost REAL DEFAULT 0
-        )''')
+        )""")
 
         # VENDOR MASTER
-        conn.execute('''CREATE TABLE IF NOT EXISTS VendorMaster (
+        conn.execute("""CREATE TABLE IF NOT EXISTS VendorMaster (
             VendorName TEXT PRIMARY KEY
-        )''')
+        )""")
 
         # LEDGER
-        conn.execute('''CREATE TABLE IF NOT EXISTS VendorLedger (
+        conn.execute("""CREATE TABLE IF NOT EXISTS VendorLedger (
             ID INTEGER PRIMARY KEY AUTOINCREMENT,
             VendorName TEXT,
             Date TEXT,
             Description TEXT,
             Credit REAL
-        )''')
+        )""")
 
         conn.commit()
 
 init_db()
 
 # ===============================
-# 1. HEADER
+# HEADER
 # ===============================
 st.markdown("## 🛒 ZUNI PROCUREMENT SYSTEM")
 
 # ===============================
-# 2. FETCH DATA SAFE
+# FETCH DATA SAFE
 # ===============================
 with db_connect() as conn:
-    vendors_df = fetch_df(conn, "SELECT VendorName FROM VendorMaster")
-    vendors = vendors_df['VendorName'].tolist() if not vendors_df.empty else []
+    try:
+        vendors_df = fetch_df(conn, "SELECT VendorName FROM VendorMaster")
+        vendors = vendors_df['VendorName'].tolist() if not vendors_df.empty else []
+    except:
+        vendors = []
 
-    items_df = fetch_df(conn, "SELECT * FROM ItemMaster")
+    try:
+        items_df = fetch_df(conn, "SELECT * FROM ItemMaster")
+    except:
+        items_df = pd.DataFrame()
 
 # ===============================
 # TABS
@@ -77,7 +86,7 @@ with db_connect() as conn:
 t1, t2, t3 = st.tabs(["🐄 Animal Purchase", "📦 Store Purchase", "📜 History"])
 
 # =========================================================
-# 🐄 TAB 1: ANIMAL PURCHASE + AUTO LIVESTOCK SYNC
+# 🐄 TAB 1: ANIMAL PURCHASE
 # =========================================================
 with t1:
     st.subheader("🐄 Purchase Animal")
@@ -85,7 +94,7 @@ with t1:
     with st.form("animal_form"):
         c1, c2, c3 = st.columns(3)
         vendor = c1.selectbox("Vendor", [""] + vendors)
-        tag = c2.text_input("Tag ID").upper()
+        tag = c2.text_input("Tag ID").strip().upper()
         date = c3.date_input("Date", datetime.now())
 
         c4, c5, c6 = st.columns(3)
@@ -93,55 +102,69 @@ with t1:
         category = c5.selectbox("Category", ["Cow", "Bull", "Heifer", "Calf"])
         price = c6.number_input("Price", min_value=0.0)
 
-        submitted = st.form_submit_button("✅ Purchase Animal")
+        # 🔥 STATUS LOGIC
+        if category == "Cow":
+            status = st.selectbox("Status", ["Open", "Pregnant"])
+        elif category == "Heifer":
+            status = "Open"
+            st.info("Heifer default status = Open")
+        elif category == "Bull":
+            status = "Active"
+        else:
+            status = "Young"
 
-        if submitted:
+        submit = st.form_submit_button("✅ Purchase Animal")
+
+        if submit:
             if vendor and tag:
+                try:
+                    with db_connect() as conn:
 
-                with db_connect() as conn:
+                        # DUPLICATE CHECK
+                        exists = conn.execute(
+                            "SELECT 1 FROM AnimalMaster WHERE TagID=?",
+                            (tag,)
+                        ).fetchone()
 
-                    # CHECK DUPLICATE
-                    exists = conn.execute(
-                        "SELECT TagID FROM AnimalMaster WHERE TagID=?",
-                        (tag,)
-                    ).fetchone()
+                        if exists:
+                            st.error("❌ Tag already exists!")
+                        else:
+                            # INSERT ANIMAL
+                            conn.execute("""
+                                INSERT INTO AnimalMaster
+                                (TagID, Breed, Category, Status, PurchasePrice, PurchaseDate)
+                                VALUES (?,?,?,?,?,?)
+                            """, (tag, breed, category, status, price, date))
 
-                    if exists:
-                        st.error("❌ Tag already exists!")
-                    else:
-                        # INSERT IN ANIMAL MASTER
-                        conn.execute("""
-                            INSERT INTO AnimalMaster 
-                            (TagID, Breed, Category, Status, PurchasePrice, PurchaseDate)
-                            VALUES (?,?,?,?,?,?)
-                        """, (tag, breed, category, "Active", price, date))
+                            # 🔥 LIVESTOCK AUTO SYNC
+                            conn.execute("""
+                                INSERT INTO LivestockMaster
+                                (TagID, Breed, Category, Status, EntryDate)
+                                VALUES (?,?,?,?,?)
+                            """, (tag, breed, category, status, date))
 
-                        # 🔥 AUTO LIVESTOCK SYNC
-                        conn.execute("""
-                            INSERT INTO LivestockMaster
-                            (TagID, Breed, Category, Status, EntryDate)
-                            VALUES (?,?,?,?,?)
-                        """, (tag, breed, category, "Active", date))
+                            # LEDGER
+                            conn.execute("""
+                                INSERT INTO VendorLedger
+                                (VendorName, Date, Description, Credit)
+                                VALUES (?,?,?,?)
+                            """, (vendor, date, f"Animal Purchase {tag}", price))
 
-                        # LEDGER ENTRY
-                        conn.execute("""
-                            INSERT INTO VendorLedger 
-                            (VendorName, Date, Description, Credit)
-                            VALUES (?,?,?,?)
-                        """, (vendor, date, f"Animal Purchase {tag}", price))
+                            conn.commit()
 
-                        conn.commit()
+                    st.success(f"✅ Animal {tag} added + synced")
+                    st.rerun()
 
-                st.success(f"✅ Animal {tag} added + synced to Livestock")
-                st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
             else:
-                st.warning("Fill all required fields")
+                st.warning("Vendor & Tag required")
 
 # =========================================================
-# 📦 TAB 2: STORE PURCHASE (MULTI ITEM + INVENTORY)
+# 📦 TAB 2: STORE PURCHASE (MULTI ITEM)
 # =========================================================
 with t2:
-    st.subheader("📦 Store Purchase (Multi Item)")
+    st.subheader("📦 Store Purchase")
 
     vendor = st.selectbox("Vendor", [""] + vendors, key="store_vendor")
     date = st.date_input("Date", datetime.now(), key="store_date")
@@ -165,52 +188,54 @@ with t2:
                 "total": qty * rate
             })
 
-    # SHOW CART
     df_cart = pd.DataFrame(st.session_state.cart)
+
     if not df_cart.empty:
         st.dataframe(df_cart)
 
-        grand_total = df_cart["total"].sum()
-        st.success(f"💰 Total = {grand_total}")
+        total = df_cart["total"].sum()
+        st.success(f"💰 Total = {total}")
 
         if st.button("✅ Complete Purchase"):
-            with db_connect() as conn:
-                for row in st.session_state.cart:
+            if vendor:
+                with db_connect() as conn:
+                    for row in st.session_state.cart:
 
-                    # UPSERT ITEM
-                    exist = conn.execute(
-                        "SELECT Quantity FROM ItemMaster WHERE ItemName=?",
-                        (row["item"],)
-                    ).fetchone()
+                        exist = conn.execute(
+                            "SELECT Quantity FROM ItemMaster WHERE ItemName=?",
+                            (row["item"],)
+                        ).fetchone()
 
-                    if exist:
-                        conn.execute("""
-                            UPDATE ItemMaster
-                            SET Quantity = Quantity + ?, Cost = ?
-                            WHERE ItemName = ?
-                        """, (row["qty"], row["rate"], row["item"]))
-                    else:
-                        conn.execute("""
-                            INSERT INTO ItemMaster
-                            (ItemName, Category, UOM, Quantity, Cost)
-                            VALUES (?,?,?,?,?)
-                        """, (row["item"], category, "Unit", row["qty"], row["rate"]))
+                        if exist:
+                            conn.execute("""
+                                UPDATE ItemMaster
+                                SET Quantity = Quantity + ?, Cost = ?
+                                WHERE ItemName = ?
+                            """, (row["qty"], row["rate"], row["item"]))
+                        else:
+                            conn.execute("""
+                                INSERT INTO ItemMaster
+                                (ItemName, Category, UOM, Quantity, Cost)
+                                VALUES (?,?,?,?,?)
+                            """, (row["item"], category, "Unit", row["qty"], row["rate"]))
 
-                # LEDGER
-                conn.execute("""
-                    INSERT INTO VendorLedger
-                    (VendorName, Date, Description, Credit)
-                    VALUES (?,?,?,?)
-                """, (vendor, date, "Store Purchase", grand_total))
+                    # LEDGER ENTRY
+                    conn.execute("""
+                        INSERT INTO VendorLedger
+                        (VendorName, Date, Description, Credit)
+                        VALUES (?,?,?,?)
+                    """, (vendor, date, "Store Purchase", total))
 
-                conn.commit()
+                    conn.commit()
 
-            st.session_state.cart = []
-            st.success("✅ Purchase Completed")
-            st.rerun()
+                st.session_state.cart = []
+                st.success("✅ Purchase Completed")
+                st.rerun()
+            else:
+                st.warning("Vendor required")
 
 # =========================================================
-# 📜 TAB 3: HISTORY
+# 📜 TAB 3: HISTORY + STATUS COUNT
 # =========================================================
 with t3:
     st.subheader("📜 Purchase History")
@@ -221,4 +246,19 @@ with t3:
     if not df.empty:
         st.dataframe(df, use_container_width=True)
     else:
-        st.info("No data found")
+        st.info("No history")
+
+    st.divider()
+
+    # 🔥 STATUS COUNT
+    st.subheader("🐄 Animal Status Summary")
+
+    with db_connect() as conn:
+        df_status = fetch_df(conn, """
+            SELECT Status, COUNT(*) as Total
+            FROM AnimalMaster
+            GROUP BY Status
+        """)
+
+    if not df_status.empty:
+        st.dataframe(df_status, use_container_width=True)
