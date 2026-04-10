@@ -5,17 +5,24 @@ from datetime import date
 
 st.set_page_config(layout="wide")
 
-# ---------------- LOAD ----------------
-with db_connect() as conn:
-    animals = fetch_df(conn, "SELECT * FROM AnimalMaster")
+# ---------------- SAFE FETCH ----------------
+def safe_fetch(query, params=None):
+    with db_connect() as conn:
+        try:
+            return fetch_df(conn, query, params)
+        except:
+            return pd.DataFrame()
 
-if animals is None or animals.empty:
+# ---------------- LOAD ANIMALS ----------------
+animals = safe_fetch("SELECT * FROM AnimalMaster")
+
+if animals.empty:
     animals = pd.DataFrame(columns=["TagID","Category","Weight"])
 
-tags = animals["TagID"].tolist()
+tags = animals["TagID"].dropna().astype(str).tolist()
 
 # ---------------- UI ----------------
-st.title("🐄 HRM Dairy - Livestock ERP PRO")
+st.title("🐄 HRM Dairy ERP PRO")
 
 search = st.text_input("🔍 Search Animal")
 
@@ -38,76 +45,77 @@ with tabs[0]:
 # ---------------- 2 MILK ----------------
 with tabs[1]:
     tag = st.selectbox("Animal", tags, key="milk")
-    m = st.number_input("Morning")
-    e = st.number_input("Evening")
 
-    if st.button("Save Milk"):
+    m = st.number_input("Morning", key="m")
+    e = st.number_input("Evening", key="e")
+
+    if st.button("Save Milk", key="milk_save"):
         with db_connect() as conn:
             conn.execute("INSERT INTO MilkLogs VALUES (?,?,?,?,?)",
                          (str(date.today()), tag, m, e, m+e))
             conn.commit()
 
-    df = fetch_df(db_connect(), "SELECT * FROM MilkLogs WHERE TagID=?", [tag])
+    df = safe_fetch("SELECT rowid,* FROM MilkLogs WHERE TagID=?", [tag])
     st.dataframe(df)
+
+    rid = st.number_input("Delete Row ID", step=1, key="milk_del")
+    if st.button("Delete Milk", key="milk_btn"):
+        with db_connect() as conn:
+            conn.execute("DELETE FROM MilkLogs WHERE rowid=?", (rid,))
+            conn.commit()
 
 # ---------------- 3 TREATMENT ----------------
 with tabs[2]:
     tag = st.selectbox("Animal", tags, key="treat")
 
-    with db_connect() as conn:
-        meds = fetch_df(conn, "SELECT ItemName,UOM FROM Inventory WHERE Type='Medicine'")
-
-    med = st.selectbox("Medicine", meds["ItemName"], key="med")
-    qty = st.number_input("Qty")
+    meds = safe_fetch("SELECT ItemName,UOM FROM Inventory WHERE Type='Medicine'")
+    med = st.selectbox("Medicine", meds["ItemName"] if not meds.empty else [], key="med")
+    qty = st.number_input("Qty", key="med_qty")
 
     if st.button("Save Treatment"):
         with db_connect() as conn:
             conn.execute("INSERT INTO TreatmentLogs VALUES (?,?,?,?)",
                          (str(date.today()), tag, med, qty))
-
-            # 🔥 STOCK MINUS
             conn.execute("UPDATE Inventory SET Qty=Qty-? WHERE ItemName=?", (qty, med))
             conn.commit()
 
-    df = fetch_df(db_connect(), "SELECT * FROM TreatmentLogs WHERE TagID=?", [tag])
-    st.dataframe(df)
+    st.dataframe(safe_fetch("SELECT rowid,* FROM TreatmentLogs WHERE TagID=?", [tag]))
 
 # ---------------- 4 BREEDING ----------------
 with tabs[3]:
     tag = st.selectbox("Cow", tags, key="breed")
 
-    typ = st.selectbox("Type", ["AI","PD","Bull"])
+    typ = st.selectbox("Type", ["AI","PD","Bull"], key="btype")
+
+    semen = None
 
     if typ=="AI":
-        semen = st.selectbox("Semen", fetch_df(db_connect(),"SELECT ItemName FROM Inventory WHERE Type='Semen'")["ItemName"])
+        sem = safe_fetch("SELECT ItemName FROM Inventory WHERE Type='Semen'")
+        semen = st.selectbox("Semen", sem["ItemName"] if not sem.empty else [], key="sem")
 
-    if typ=="Bull":
+    elif typ=="Bull":
         bulls = animals[animals["Category"]=="Bull"]["TagID"]
-        semen = st.selectbox("Bull", bulls)
+        semen = st.selectbox("Bull", bulls, key="bull")
 
     if st.button("Save Breeding"):
         with db_connect() as conn:
             conn.execute("INSERT INTO BreedingLogs VALUES (?,?,?,?)",
-                         (str(date.today()), tag, typ, semen if typ!="PD" else None))
+                         (str(date.today()), tag, typ, semen))
 
             if typ=="AI":
                 conn.execute("UPDATE Inventory SET Qty=Qty-1 WHERE ItemName=?", (semen,))
             conn.commit()
 
-    df = fetch_df(db_connect(), "SELECT * FROM BreedingLogs WHERE TagID=?", [tag])
-    st.dataframe(df)
+    st.dataframe(safe_fetch("SELECT rowid,* FROM BreedingLogs WHERE TagID=?", [tag]))
 
 # ---------------- 5 CALVING ----------------
 with tabs[4]:
     dam = st.selectbox("Dam", tags, key="calv")
 
-    typ = st.radio("Type",["Single","Twins"])
+    typ = st.radio("Type",["Single","Twins"], key="ctype")
 
-    c1 = st.text_input("Calf 1")
-
-    c2 = ""
-    if typ=="Twins":
-        c2 = st.text_input("Calf 2")
+    c1 = st.text_input("Calf 1", key="c1")
+    c2 = st.text_input("Calf 2", key="c2") if typ=="Twins" else ""
 
     if st.button("Save Calving"):
         with db_connect() as conn:
@@ -115,11 +123,13 @@ with tabs[4]:
                          (str(date.today()), dam, typ, c1, c2))
             conn.commit()
 
+    st.dataframe(safe_fetch("SELECT rowid,* FROM CalvingLogs WHERE DamID=?", [dam]))
+
 # ---------------- 6 WEIGHT ----------------
 with tabs[5]:
     tag = st.selectbox("Animal", tags, key="weight")
 
-    w = st.number_input("Weight")
+    w = st.number_input("Weight", key="w")
 
     if st.button("Save Weight"):
         with db_connect() as conn:
@@ -128,7 +138,7 @@ with tabs[5]:
             conn.execute("UPDATE AnimalMaster SET Weight=? WHERE TagID=?", (w, tag))
             conn.commit()
 
-    df = fetch_df(db_connect(), "SELECT * FROM WeightLogs WHERE TagID=?", [tag])
+    df = safe_fetch("SELECT * FROM WeightLogs WHERE TagID=?", [tag])
     st.dataframe(df)
 
     if not df.empty:
@@ -136,11 +146,10 @@ with tabs[5]:
 
 # ---------------- 7 VACCINATION ----------------
 with tabs[6]:
-    sel = st.multiselect("Animals", tags)
+    sel = st.multiselect("Animals", tags, key="vac_animals")
 
-    vac = st.selectbox("Vaccine",
-        fetch_df(db_connect(),"SELECT ItemName FROM Inventory WHERE Type='Vaccine'")["ItemName"]
-    )
+    vacs = safe_fetch("SELECT ItemName FROM Inventory WHERE Type='Vaccine'")
+    vac = st.selectbox("Vaccine", vacs["ItemName"] if not vacs.empty else [], key="vac")
 
     if st.button("Save Vaccination"):
         with db_connect() as conn:
@@ -150,11 +159,13 @@ with tabs[6]:
             conn.execute("UPDATE Inventory SET Qty=Qty-? WHERE ItemName=?", (len(sel), vac))
             conn.commit()
 
+    st.dataframe(safe_fetch("SELECT * FROM VaccinationLogs"))
+
 # ---------------- 8 MOVEMENT ----------------
 with tabs[7]:
     tag = st.selectbox("Animal", tags, key="move")
 
-    loc = st.text_input("New Location")
+    loc = st.text_input("Location", key="loc")
 
     if st.button("Move"):
         with db_connect() as conn:
@@ -162,18 +173,17 @@ with tabs[7]:
                          (str(date.today()), tag, loc))
             conn.commit()
 
+    st.dataframe(safe_fetch("SELECT * FROM MovementLogs WHERE TagID=?", [tag]))
+
 # ---------------- 9 SEMEN ----------------
 with tabs[8]:
-    st.subheader("Semen Usage Log")
-
-    df = fetch_df(db_connect(), "SELECT * FROM BreedingLogs WHERE Type='AI'")
-    st.dataframe(df)
+    st.dataframe(safe_fetch("SELECT * FROM BreedingLogs WHERE Type='AI'"))
 
 # ---------------- 10 PEN REGISTER ----------------
 with tabs[9]:
     tag = st.selectbox("Animal", tags, key="pen")
 
-    pen = st.text_input("Pen")
+    pen = st.text_input("Pen", key="pen_val")
 
     if st.button("Assign Pen"):
         with db_connect() as conn:
@@ -181,14 +191,18 @@ with tabs[9]:
                          (str(date.today()), tag, pen))
             conn.commit()
 
+    st.dataframe(safe_fetch("SELECT * FROM MovementLogs WHERE TagID=?", [tag]))
+
 # ---------------- 11 REPORTS ----------------
 with tabs[10]:
-    st.subheader("Reports")
+    st.subheader("Milk Report")
 
-    with db_connect() as conn:
-        milk = fetch_df(conn, "SELECT Date, SUM(Total) as Milk FROM MilkLogs GROUP BY Date")
+    milk = safe_fetch("SELECT Date, SUM(Total) as Total FROM MilkLogs GROUP BY Date")
 
-    st.line_chart(milk.set_index("Date"))
+    st.dataframe(milk)
+
+    if not milk.empty:
+        st.line_chart(milk.set_index("Date"))
 
     csv = milk.to_csv(index=False).encode("utf-8")
-    st.download_button("Download Report", csv, "report.csv")
+    st.download_button("Download Excel", csv, "milk_report.csv")
