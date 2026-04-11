@@ -1,186 +1,63 @@
 import sqlite3
 import os
 import pandas as pd
+import streamlit as st
 
-# ===============================
-# DATABASE CONNECTION
-# ===============================
-def db_connect():
-    db_path = os.path.join(os.getcwd(), "zuni.db")
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    return conn
+DB_PATH = os.path.join(os.getcwd(), "zuni.db")
 
-
-# ===============================
-# INIT DATABASE (AUTO CREATE ALL)
-# ===============================
-def init_db():
-    conn = db_connect()
+# ================= AUTO-FIX ENGINE =================
+def auto_repair_db():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
+    
+    # Sab tables ki list jo humein chahiye
+    tables = {
+        "AnimalMaster": "TagID TEXT PRIMARY KEY, Category TEXT, Breed TEXT, Status TEXT, Weight REAL, PurchasePrice REAL",
+        "VendorMaster": "id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT, Phone TEXT, Address TEXT, Balance REAL DEFAULT 0",
+        "BreedingLogs": "Date TEXT, TagID TEXT, Type TEXT, Semen TEXT, Vet TEXT, PD_Status TEXT, ExpectedCalving TEXT",
+        "VaccineLogs": "Date TEXT, TagID TEXT, Vaccine TEXT, Dose TEXT, Vet TEXT",
+        "TreatmentLogs": "Date TEXT, TagID TEXT, Disease TEXT, Medicine TEXT, Status TEXT, Vet TEXT",
+        "CalvingLogs": "Date TEXT, TagID TEXT, CalfGender TEXT, CalfWeight REAL, Sire TEXT",
+        "MovementLogs": "Date TEXT, TagID TEXT, FromPen TEXT, ToPen TEXT, Reason TEXT",
+        "Staff": "id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT, Role TEXT, Salary REAL",
+        "SalaryLogs": "Date TEXT, StaffName TEXT, AmountPaid REAL, Status TEXT",
+        "Inventory": "ItemID INTEGER PRIMARY KEY AUTOINCREMENT, ItemName TEXT, Category TEXT, StockQty REAL, Unit TEXT",
+        "SalesLogs": "id INTEGER PRIMARY KEY AUTOINCREMENT, Date TEXT, Item TEXT, Qty REAL, Amount REAL, Customer TEXT",
+        "Transactions": "id INTEGER PRIMARY KEY AUTOINCREMENT, Date TEXT, Title TEXT, Type TEXT, Amount REAL"
+    }
 
-    # ================= Vendors =================
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS VendorMaster (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        phone TEXT,
-        address TEXT
-    )
-    """)
-
-    # ================= Animals =================
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Animals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tag TEXT UNIQUE,
-        breed TEXT,
-        dob TEXT,
-        status TEXT
-    )
-    """)
-
-    # ================= Milk =================
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS MilkProduction (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        animal_id INTEGER,
-        date TEXT,
-        milk_qty REAL,
-        FOREIGN KEY (animal_id) REFERENCES Animals(id)
-    )
-    """)
-
-    # ================= Feed =================
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Feed (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT,
-        item TEXT,
-        qty REAL,
-        cost REAL
-    )
-    """)
-
-    # ================= Purchase =================
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Purchase (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        vendor_id INTEGER,
-        date TEXT,
-        item TEXT,
-        amount REAL,
-        FOREIGN KEY (vendor_id) REFERENCES VendorMaster(id)
-    )
-    """)
-
-    # ================= Payment =================
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS Payment (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        vendor_id INTEGER,
-        date TEXT,
-        amount REAL,
-        FOREIGN KEY (vendor_id) REFERENCES VendorMaster(id)
-    )
-    """)
-
+    for table_name, columns in tables.items():
+        cursor.execute(f"CREATE TABLE IF NOT EXISTS {table_name} ({columns})")
+    
     conn.commit()
     conn.close()
 
+# ================= SMART DATABASE ACCESS =================
+def db_connect():
+    # Har baar connect hone se pehle check karega
+    auto_repair_db() 
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
 
-# ===============================
-# FETCH FUNCTION
-# ===============================
 def fetch_df(query, params=None):
-    conn = db_connect()
-    df = pd.read_sql_query(query, conn, params=params)
-    conn.close()
-    return df
+    try:
+        conn = db_connect()
+        df = pd.read_sql_query(query, conn, params=params)
+        conn.close()
+        return df
+    except Exception as e:
+        # Agar query fail ho (e.g. column missing), repair run karo aur empty DF do
+        auto_repair_db()
+        return pd.DataFrame()
 
+def exec_q(query, params=()):
+    try:
+        conn = db_connect()
+        conn.execute(query, params)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        auto_repair_db()
+        st.error(f"Auto-Repair Triggered! Error: {e}")
 
-# ===============================
-# INSERT FUNCTIONS
-# ===============================
-
-def add_vendor(name, phone, address):
-    conn = db_connect()
-    conn.execute("INSERT INTO VendorMaster (name, phone, address) VALUES (?, ?, ?)", (name, phone, address))
-    conn.commit()
-    conn.close()
-
-
-def add_animal(tag, breed, dob, status):
-    conn = db_connect()
-    conn.execute("INSERT INTO Animals (tag, breed, dob, status) VALUES (?, ?, ?, ?)", (tag, breed, dob, status))
-    conn.commit()
-    conn.close()
-
-
-def add_milk(animal_id, date, milk_qty):
-    conn = db_connect()
-    conn.execute("INSERT INTO MilkProduction (animal_id, date, milk_qty) VALUES (?, ?, ?)", (animal_id, date, milk_qty))
-    conn.commit()
-    conn.close()
-
-
-def add_feed(date, item, qty, cost):
-    conn = db_connect()
-    conn.execute("INSERT INTO Feed (date, item, qty, cost) VALUES (?, ?, ?, ?)", (date, item, qty, cost))
-    conn.commit()
-    conn.close()
-
-
-def add_purchase(vendor_id, date, item, amount):
-    conn = db_connect()
-    conn.execute("INSERT INTO Purchase (vendor_id, date, item, amount) VALUES (?, ?, ?, ?)", (vendor_id, date, item, amount))
-    conn.commit()
-    conn.close()
-
-
-def add_payment(vendor_id, date, amount):
-    conn = db_connect()
-    conn.execute("INSERT INTO Payment (vendor_id, date, amount) VALUES (?, ?, ?)", (vendor_id, date, amount))
-    conn.commit()
-    conn.close()
-
-
-# ===============================
-# REPORTS (NO EMPTY DATA ISSUE)
-# ===============================
-
-def vendor_report():
-    query = """
-    SELECT 
-        v.name,
-        IFNULL(SUM(pu.amount),0) AS purchase,
-        IFNULL(SUM(py.amount),0) AS payment,
-        IFNULL(SUM(pu.amount),0) - IFNULL(SUM(py.amount),0) AS balance
-    FROM VendorMaster v
-    LEFT JOIN Purchase pu ON v.id = pu.vendor_id
-    LEFT JOIN Payment py ON v.id = py.vendor_id
-    GROUP BY v.id
-    """
-    return fetch_df(query)
-
-
-def milk_report():
-    query = """
-    SELECT 
-        a.tag,
-        SUM(m.milk_qty) AS total_milk
-    FROM Animals a
-    LEFT JOIN MilkProduction m ON a.id = m.animal_id
-    GROUP BY a.id
-    """
-    return fetch_df(query)
-
-
-def cash_in_hand():
-    query = """
-    SELECT 
-        IFNULL((SELECT SUM(amount) FROM MilkProduction),0)
-        - IFNULL((SELECT SUM(cost) FROM Feed),0)
-        - IFNULL((SELECT SUM(amount) FROM Payment),0)
-        AS cash
-    """
-    return fetch_df(query)
+# Database ko foran initialize karein
+auto_repair_db()
