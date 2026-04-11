@@ -1,42 +1,106 @@
-import os
 import sqlite3
+import os
 import pandas as pd
-from contextlib import contextmanager
-from typing import Iterator, Optional
 
-def get_db_path() -> str:
-    # Live aur Local dono ke liye rasta
-    project_dir = os.path.dirname(os.path.abspath(__file__))
-    for name in ["Zuni.db", "zuni.db"]:
-        full_path = os.path.join(project_dir, name)
-        if os.path.exists(full_path):
-            return full_path
-    return os.path.join(project_dir, "Zuni.db")
-
-@contextmanager
-def db_connect() -> Iterator[sqlite3.Connection]:
-    db_path = get_db_path()
+# ===============================
+# DATABASE CONNECTION
+# ===============================
+def db_connect():
+    db_path = os.path.join(os.getcwd(), "zuni.db")
     conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    try:
-        init_db(conn) # Missing tables khud banayega
-        yield conn
-    finally:
-        conn.close()
+    return conn
 
-def fetch_df(conn: sqlite3.Connection, query: str, params: tuple = ()) -> pd.DataFrame:
+
+# ===============================
+# AUTO CREATE TABLES (VERY IMPORTANT)
+# ===============================
+def init_db():
+    conn = db_connect()
+    cursor = conn.cursor()
+
+    # Vendor Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS VendorMaster (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        phone TEXT
+    )
+    """)
+
+    # Purchase Table (LINKED)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS Purchase (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        vendor_id INTEGER,
+        date TEXT,
+        amount REAL,
+        FOREIGN KEY (vendor_id) REFERENCES VendorMaster(id)
+    )
+    """)
+
+    # Payment Table (LINKED)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS Payment (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        vendor_id INTEGER,
+        date TEXT,
+        amount REAL,
+        FOREIGN KEY (vendor_id) REFERENCES VendorMaster(id)
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+# ===============================
+# FETCH FUNCTION
+# ===============================
+def fetch_df(query, params=None):
+    conn = db_connect()
     return pd.read_sql_query(query, conn, params=params)
 
-def init_db(conn: sqlite3.Connection) -> None:
-    # Aapke purane 350 rows ka logic yahan mehfooz hai
-    tables = [
-        "CREATE TABLE IF NOT EXISTS Staff (StaffID INTEGER PRIMARY KEY AUTOINCREMENT, StaffName TEXT, MonthlySalary REAL, Status TEXT DEFAULT 'Active');",
-        "CREATE TABLE IF NOT EXISTS AnimalMaster (ID INTEGER PRIMARY KEY AUTOINCREMENT, Category TEXT, Breed TEXT, Status TEXT);",
-        "CREATE TABLE IF NOT EXISTS ChartOfAccounts (AccountID INTEGER PRIMARY KEY AUTOINCREMENT, AccountName TEXT, AccountType TEXT, Balance REAL DEFAULT 0);",
-        "CREATE TABLE IF NOT EXISTS Transactions (TransactionID INTEGER PRIMARY KEY AUTOINCREMENT, Date DATE, AccountName TEXT, PayeeName TEXT, Description TEXT, Debit REAL DEFAULT 0, Credit REAL DEFAULT 0);",
-        "CREATE TABLE IF NOT EXISTS VendorMaster (VendorID INTEGER PRIMARY KEY AUTOINCREMENT, VendorName TEXT, ContactNo TEXT);",
-        "CREATE TABLE IF NOT EXISTS MilkSales (MilkSaleID INTEGER PRIMARY KEY AUTOINCREMENT, SaleDate DATE, Liters REAL, Amount REAL);"
-    ]
-    for q in tables:
-        conn.execute(q)
+
+# ===============================
+# INSERT FUNCTIONS
+# ===============================
+def add_vendor(name, phone):
+    conn = db_connect()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO VendorMaster (name, phone) VALUES (?, ?)", (name, phone))
     conn.commit()
+    conn.close()
+
+
+def add_purchase(vendor_id, date, amount):
+    conn = db_connect()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO Purchase (vendor_id, date, amount) VALUES (?, ?, ?)", (vendor_id, date, amount))
+    conn.commit()
+    conn.close()
+
+
+def add_payment(vendor_id, date, amount):
+    conn = db_connect()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO Payment (vendor_id, date, amount) VALUES (?, ?, ?)", (vendor_id, date, amount))
+    conn.commit()
+    conn.close()
+
+
+# ===============================
+# REPORT (JOINED DATA)
+# ===============================
+def vendor_report():
+    query = """
+    SELECT 
+        v.name,
+        IFNULL(SUM(pu.amount),0) AS total_purchase,
+        IFNULL(SUM(py.amount),0) AS total_payment,
+        IFNULL(SUM(pu.amount),0) - IFNULL(SUM(py.amount),0) AS balance
+    FROM VendorMaster v
+    LEFT JOIN Purchase pu ON v.id = pu.vendor_id
+    LEFT JOIN Payment py ON v.id = py.vendor_id
+    GROUP BY v.id
+    """
+    return fetch_df(query)
