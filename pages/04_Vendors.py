@@ -52,7 +52,18 @@ with tab_v:
         v_address = v2.text_input("Address", value=ev['Address'] if ev else "")
         if st.form_submit_button("✅ SAVE VENDOR"):
             with db_connect() as conn:
-                conn.execute("INSERT OR REPLACE INTO VendorMaster VALUES (?,?,?,?)", (v_name, v_person, v_phone, v_address))
+                # Purani line replace karein is se:
+with db_connect() as conn:
+    conn.execute("""
+        INSERT INTO VendorMaster (VendorName, ContactPerson, Phone, Address) 
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(VendorName) DO UPDATE SET 
+            ContactPerson=excluded.ContactPerson, 
+            Phone=excluded.Phone, 
+            Address=excluded.Address
+    """, (v_name, v_person, v_phone, v_address))
+    conn.commit()
+
                 conn.commit()
             st.session_state.edit_v = None
             st.rerun()
