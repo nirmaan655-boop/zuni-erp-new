@@ -47,7 +47,7 @@ with tab_v:
         ev = st.session_state.edit_v
         v1, v2 = st.columns(2)
         v_name = v1.text_input("Vendor Name", value=ev['VendorName'] if ev else "").strip().upper()
-"VendorMaster": "id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT, ContactPerson TEXT, Phone TEXT, Address TEXT, Balance REAL DEFAULT 0",
+        v_person = v2.text_input("Contact Person", value=ev['ContactPerson'] if ev else "")
         v_phone = v1.text_input("Phone", value=ev['Phone'] if ev else "")
         v_address = v2.text_input("Address", value=ev['Address'] if ev else "")
         if st.form_submit_button("✅ SAVE VENDOR"):
