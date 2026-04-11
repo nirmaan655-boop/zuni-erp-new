@@ -3,27 +3,39 @@ import os
 import pandas as pd
 import streamlit as st
 
+# Standard Database Path
 DB_PATH = os.path.join(os.getcwd(), "zuni.db")
 
-# ================= AUTO-FIX ENGINE =================
+# ================= AUTO-FIX & SYNC ENGINE =================
 def auto_repair_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cursor = conn.cursor()
     
-    # Sab tables ki list jo humein chahiye
+    # 7 Modules ke liye exact tables aur columns ka map
     tables = {
-        "AnimalMaster": "TagID TEXT PRIMARY KEY, Category TEXT, Breed TEXT, Status TEXT, Weight REAL, PurchasePrice REAL",
-        "VendorMaster": "id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT, Phone TEXT, Address TEXT, Balance REAL DEFAULT 0",
+        # 1. Livestock & Procurement
+        "AnimalMaster": "TagID TEXT PRIMARY KEY, Category TEXT, Breed TEXT, Status TEXT, Weight REAL, PurchasePrice REAL, PurchaseDate TEXT",
         "BreedingLogs": "Date TEXT, TagID TEXT, Type TEXT, Semen TEXT, Vet TEXT, PD_Status TEXT, ExpectedCalving TEXT",
         "VaccineLogs": "Date TEXT, TagID TEXT, Vaccine TEXT, Dose TEXT, Vet TEXT",
         "TreatmentLogs": "Date TEXT, TagID TEXT, Disease TEXT, Medicine TEXT, Status TEXT, Vet TEXT",
         "CalvingLogs": "Date TEXT, TagID TEXT, CalfGender TEXT, CalfWeight REAL, Sire TEXT",
-        "MovementLogs": "Date TEXT, TagID TEXT, FromPen TEXT, ToPen TEXT, Reason TEXT",
-        "Staff": "id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT, Role TEXT, Salary REAL",
-        "SalaryLogs": "Date TEXT, StaffName TEXT, AmountPaid REAL, Status TEXT",
-        "Inventory": "ItemID INTEGER PRIMARY KEY AUTOINCREMENT, ItemName TEXT, Category TEXT, StockQty REAL, Unit TEXT",
-        "SalesLogs": "id INTEGER PRIMARY KEY AUTOINCREMENT, Date TEXT, Item TEXT, Qty REAL, Amount REAL, Customer TEXT",
-        "Transactions": "id INTEGER PRIMARY KEY AUTOINCREMENT, Date TEXT, Title TEXT, Type TEXT, Amount REAL"
+        
+        # 2. Master Setup & Vendors
+        "VendorMaster": "VendorName TEXT PRIMARY KEY, ContactPerson TEXT, Phone TEXT, Address TEXT, Balance REAL DEFAULT 0",
+        "EmployeeMaster": "Name TEXT PRIMARY KEY, CNIC TEXT, Phone TEXT, Designation TEXT, Salary REAL, LeaveAllowed INTEGER DEFAULT 2",
+        
+        # 3. Inventory & Feed
+        "ItemMaster": "ItemName TEXT PRIMARY KEY, Category TEXT, UOM TEXT, Quantity REAL DEFAULT 0, Cost REAL DEFAULT 0, Store TEXT",
+        "FeedRecipes": "PenID TEXT PRIMARY KEY, ItemName TEXT, QtyPerAnimal REAL, TotalAnimals INTEGER",
+        
+        # 4. Accounting & Sales
+        "ChartOfAccounts": "AccountName TEXT PRIMARY KEY, AccountType TEXT, Balance REAL DEFAULT 0",
+        "Transactions": "id INTEGER PRIMARY KEY AUTOINCREMENT, Date TEXT, AccountName TEXT, PayeeName TEXT, Description TEXT, Debit REAL, Credit REAL",
+        "Sales": "SaleID INTEGER PRIMARY KEY AUTOINCREMENT, Date TEXT, CustomerName TEXT, Category TEXT, ItemName TEXT, Qty REAL, UOM TEXT, Rate REAL, Total REAL, PaymentMode TEXT",
+        
+        # 5. Payroll
+        "StaffLeaves": "id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT, LeaveDate TEXT, Reason TEXT, Type TEXT",
+        "SalaryHistory": "id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT, Month TEXT, Basic REAL, Bonus REAL, Deduction REAL, NetPaid REAL"
     }
 
     for table_name, columns in tables.items():
@@ -32,32 +44,31 @@ def auto_repair_db():
     conn.commit()
     conn.close()
 
-# ================= SMART DATABASE ACCESS =================
+# ================= SMART ACCESS FUNCTIONS =================
 def db_connect():
-    # Har baar connect hone se pehle check karega
-    auto_repair_db() 
+    auto_repair_db() # Har connection se pehle check
     return sqlite3.connect(DB_PATH, check_same_thread=False)
 
-def fetch_df(query, params=None):
+def fetch_df(conn_unused, query, params=()):
+    """Aapki files 'conn' pass karti hain, hum yahan handle karte hain"""
     try:
-        conn = db_connect()
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
         return df
     except Exception as e:
-        # Agar query fail ho (e.g. column missing), repair run karo aur empty DF do
         auto_repair_db()
         return pd.DataFrame()
 
 def exec_q(query, params=()):
     try:
-        conn = db_connect()
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         conn.execute(query, params)
         conn.commit()
         conn.close()
     except Exception as e:
         auto_repair_db()
-        st.error(f"Auto-Repair Triggered! Error: {e}")
+        st.error(f"Repairing Database... Please refresh. Error: {e}")
 
-# Database ko foran initialize karein
+# Database initialization
 auto_repair_db()
