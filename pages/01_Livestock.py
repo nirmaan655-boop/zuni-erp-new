@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 import os
+import plotly.express as px
 
-# ================= DATABASE =================
+# ================= DATABASE CONNECTION =================
 DB_PATH = os.path.join(os.path.dirname(__file__), "Zuni.db")
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -15,331 +16,195 @@ def execq(sql, params=()):
     conn.execute(sql, params)
     conn.commit()
 
-# ================= INIT =================
+# ================= DATABASE SETUP (ALL TABLES) =================
 def setup():
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS AnimalMaster (
-        TagID TEXT PRIMARY KEY,
-        Category TEXT,
-        Breed TEXT,
-        Status TEXT,
-        Weight REAL
+        TagID TEXT PRIMARY KEY, Category TEXT, Breed TEXT, Status TEXT, Weight REAL
     );
-
     CREATE TABLE IF NOT EXISTS BreedingLogs (
-        Date TEXT, CowTag TEXT, Type TEXT, Semen TEXT, Protocol TEXT, Vet TEXT
+        Date TEXT, CowTag TEXT, Type TEXT, Semen TEXT, Protocol TEXT, Vet TEXT, PD_Status TEXT, ExpectedCalving TEXT
     );
-
     CREATE TABLE IF NOT EXISTS CalvingLogs (
-        Date TEXT, CowTag TEXT, CalvingDate TEXT, SireTag TEXT,
-        CalfGender TEXT, CalfWeight REAL
+        Date TEXT, CowTag TEXT, CalvingDate TEXT, SireTag TEXT, CalfGender TEXT, CalfWeight REAL, Remarks TEXT
     );
-
     CREATE TABLE IF NOT EXISTS VaccineLogs (
         Date TEXT, AnimalTag TEXT, Vaccine TEXT, Dose TEXT, Vet TEXT
     );
-
     CREATE TABLE IF NOT EXISTS TreatmentLogs (
-        Date TEXT, AnimalTag TEXT, Disease TEXT, Medicine TEXT, Vet TEXT
+        Date TEXT, AnimalTag TEXT, Disease TEXT, Medicine TEXT, Vet TEXT, Status TEXT
     );
-
     CREATE TABLE IF NOT EXISTS MovementLogs (
-        Date TEXT, AnimalTag TEXT, Pen TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS DeathLogs (
-        Date TEXT, AnimalTag TEXT, Reason TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS CullingLogs (
-        Date TEXT, AnimalTag TEXT, Reason TEXT
+        Date TEXT, AnimalTag TEXT, FromPen TEXT, ToPen TEXT, Reason TEXT
     );
     """)
-
     conn.commit()
 
 setup()
 
-# ================= LOAD =================
+# ================= DATA LOADING =================
 animals = q("SELECT * FROM AnimalMaster")
 tags = animals["TagID"].tolist() if not animals.empty else []
 
-# ================= UI =================
-st.set_page_config(layout="wide")
-st.title("🐄 LIVESTOCK ERP PRO (FINAL VERSION)")
+# ================= UI SETUP =================
+st.set_page_config(layout="wide", page_title="Zuni Livestock ERP PRO")
+st.title("🐄 LIVESTOCK ERP PRO (FULL VERSION)")
 
 tabs = st.tabs([
-    "🐄 Cow Card",
-    "📋 All Animals",
-    "🧬 Breeding",
-    "🐣 Calving",
-    "💉 Vaccination",
-    "🩺 Treatment",
-    "🏥 Hospital",
-    "🚚 Movement",
-    "📊 Reports",
-    "📈 Dashboard",
-    "📌 Full History"
+    "🐄 Cow Card", "📋 Inventory", "🧬 Breeding & PD", "🐣 Calving (Twins)", 
+    "💉 Vaccination", "🩺 Treatment & Hospital", "🚚 Movement", "📊 Reports & Dashboard", "📌 Full History"
 ])
 
-# ================= 1 COW CARD =================
+# ================= 1. COW CARD =================
 with tabs[0]:
-    st.subheader("Cow Card")
-
+    st.subheader("Individual Cow Performance Card")
     if tags:
-        tag = st.selectbox("Select Animal", tags, key="card")
-
-        st.dataframe(animals[animals["TagID"] == tag])
-
-        st.metric("Vaccination", len(q("SELECT * FROM VaccineLogs WHERE AnimalTag=?", (tag,))))
-        st.metric("Breeding", len(q("SELECT * FROM BreedingLogs WHERE CowTag=?", (tag,))))
-        st.metric("Calving", len(q("SELECT * FROM CalvingLogs WHERE CowTag=?", (tag,))))
-        st.metric("Treatment", len(q("SELECT * FROM TreatmentLogs WHERE AnimalTag=?", (tag,))))
+        tag = st.selectbox("Select Animal Tag", tags, key="card_sel")
+        col1, col2, col3 = st.columns([1,2,1])
+        
+        animal_info = animals[animals["TagID"] == tag]
+        with col1:
+            st.info(f"**Category:** {animal_info['Category'].values[0]}")
+            st.info(f"**Breed:** {animal_info['Breed'].values[0]}")
+        with col2:
+            st.dataframe(animal_info)
+        with col3:
+            st.metric("Vaccines", len(q("SELECT * FROM VaccineLogs WHERE AnimalTag=?", (tag,))))
+            st.metric("Treatments", len(q("SELECT * FROM TreatmentLogs WHERE AnimalTag=?", (tag,))))
     else:
-        st.warning("No Animals Found. Add via Procurement Module.")
+        st.warning("AnimalMaster is empty. Please purchase animals from Procurement.")
 
-# ================= 2 ALL ANIMALS =================
+# ================= 2. ALL ANIMALS =================
 with tabs[1]:
-    st.subheader("All Animals")
+    st.subheader("Current Stock Inventory")
     st.dataframe(animals, use_container_width=True)
 
+# ================= 3. BREEDING & PD =================
 with tabs[2]:
-    st.subheader("🧬 PRO BREEDING MODULE")
-
+    st.subheader("🧬 Pro Breeding & Pregnancy Diagnosis")
     if tags:
+        col1, col2 = st.columns(2)
+        with col1:
+            cow = st.selectbox("Select Cow for Breeding", tags, key="br_cow")
+            b_type = st.selectbox("Breeding Type", ["AI (Artificial)", "Natural Bull"])
+            semen = st.text_input("Semen Name / Bull Tag")
+            heat_strength = st.slider("Heat Strength (1-5)", 1, 5, 3)
+            vet = st.text_input("Vet Name", key="br_vet")
+            
+            if st.button("Save Breeding Record"):
+                execq("INSERT INTO BreedingLogs (Date, CowTag, Type, Semen, Protocol, Vet, PD_Status) VALUES (?,?,?,?,?,?,?)", 
+                      (str(date.today()), cow, b_type, semen, f"Heat Score: {heat_strength}", vet, "Pending"))
+                st.success(f"Breeding Recorded for {cow}!")
 
-        # ================= SELECT COW =================
-        cow = st.selectbox("Select Cow", tags, key="cow_main")
-
-        # ================= COW DATA =================
-        cow_data = animals[animals["TagID"] == cow]
-
-        st.markdown("### 📋 Cow Profile")
-        st.dataframe(cow_data)
-
-        # ================= HEAT INFO =================
-        heat_type = st.selectbox(
-            "Heat Type",
-            ["Standing Heat", "Silent Heat", "Repeat Heat"],
-            key="heat"
-        )
-
-        heat_strength = st.slider("Heat Strength (1-5)", 1, 5, 3, key="heat_strength")
-
-        # ================= BREEDING TYPE =================
-        breed_type = st.selectbox("Breeding Type", ["AI", "Natural"], key="breed_type")
-
-        semen_or_bull = None
-
-        # ================= AI =================
-        if breed_type == "AI":
-            st.markdown("### 🧪 AI MODE")
-
-            semen_or_bull = st.text_input("Semen Name", key="semen")
-
-            straw_qty = st.number_input("Straw Qty", 1, 10, 1, key="straw")
-
-        # ================= NATURAL =================
-        else:
-            st.markdown("### 🐂 NATURAL MODE")
-
-            bulls = q("SELECT TagID FROM AnimalMaster WHERE Category='Bull'")
-
-            bull_list = bulls["TagID"].tolist() if not bulls.empty else ["BULL001"]
-
-            semen_or_bull = st.selectbox("Select Bull", bull_list, key="bull")
-
-        # ================= VET =================
-        vet = st.text_input("Vet Name", key="vet")
-
-        # ================= FERTILITY SCORE =================
-        st.markdown("### 🧠 Fertility Score")
-
-        score = (heat_strength * 20)
-
-        if cow_data.shape[0] > 0:
-            if cow_data.iloc[0]["Status"] == "Healthy":
-                score += 20
-            if cow_data.iloc[0]["Weight"] > 350:
-                score += 20
-
-        score = min(score, 100)
-
-        if score >= 80:
-            st.success(f"🟢 Excellent Fertility Score: {score}")
-        elif score >= 50:
-            st.warning(f"🟡 Medium Fertility Score: {score}")
-        else:
-            st.error(f"🔴 Low Fertility Score: {score}")
-
-        # ================= SAVE BREEDING =================
-        if st.button("Save Breeding Record", key="save_breed"):
-
-            execq("""
-            INSERT INTO BreedingLogs VALUES (?,?,?,?,?,?)
-            """, (
-                str(date.today()),
-                cow,
-                breed_type,
-                semen_or_bull,
-                heat_type,
-                vet
-            ))
-
-            st.success("Breeding Saved ✔")
-
-        # ================= PD SECTION =================
-        st.markdown("### 🧪 Pregnancy Diagnosis (PD)")
-
-        pd_result = st.selectbox("PD Result", ["Not Done", "Pregnant", "Open"], key="pd")
-
-        if pd_result == "Pregnant":
-
-            expected_calving = pd.to_datetime(date.today()) + pd.Timedelta(days=280)
-
-            st.info(f"📅 Expected Calving Date: {expected_calving.date()}")
-
-        # ================= HISTORY =================
-        st.markdown("### 📊 Breeding History")
-
-        history = q("SELECT * FROM BreedingLogs WHERE CowTag=?", (cow,))
-        st.dataframe(history)
-
-# ================= 4 CALVING =================
-with tabs[3]:
-    st.subheader("🐣 Calving (TWINS ENABLED)")
-
-    if tags:
-        cow = st.selectbox("Cow", tags, key="c1")
-
-        calving_date = st.date_input("Calving Date", key="c2")
-        sire = st.text_input("Sire Tag", key="c3")
-
-        twins = st.checkbox("Twins", key="c4")
-
-        st.markdown("### Calf 1")
-        g1 = st.selectbox("Gender", ["Male","Female"], key="c5")
-        w1 = st.number_input("Weight", key="c6")
-
-        g2 = None
-        w2 = None
-
-        if twins:
-            st.markdown("### Calf 2")
-            g2 = st.selectbox("Gender 2", ["Male","Female"], key="c7")
-            w2 = st.number_input("Weight 2", key="c8")
-
-        if st.button("Save Calving", key="c9"):
-
-            execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?)",
-                  (str(date.today()), cow, str(calving_date), sire, g1, w1))
-
-            if twins:
-                execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?)",
-                      (str(date.today()), cow, str(calving_date), sire, g2, w2))
-
-            execq("UPDATE AnimalMaster SET Status='Fresh' WHERE TagID=?", (cow,))
-
-            st.success("Saved")
-
-# ================= 5 VACCINE =================
-with tabs[4]:
-    st.subheader("Vaccination")
-
-    if tags:
-        a = st.selectbox("Animal", tags, key="v1")
-        v = st.text_input("Vaccine", key="v2")
-        d = st.text_input("Dose", key="v3")
-        vet = st.text_input("Vet", key="v4")
-
-        if st.button("Save", key="v5"):
-            execq("INSERT INTO VaccineLogs VALUES (?,?,?,?,?)",
-                  (str(date.today()), a, v, d, vet))
-            st.success("Saved")
-
-# ================= 6 TREATMENT =================
-with tabs[5]:
-    st.subheader("Treatment")
-
-    if tags:
-        a = st.selectbox("Animal", tags, key="t1")
-        dis = st.text_input("Disease", key="t2")
-        med = st.text_input("Medicine", key="t3")
-        vet = st.text_input("Vet", key="t4")
-
-        if st.button("Save", key="t5"):
-            execq("INSERT INTO TreatmentLogs VALUES (?,?,?,?,?)",
-                  (str(date.today()), a, dis, med, vet))
-            st.success("Saved")
-
-# ================= 7 HOSPITAL =================
-with tabs[6]:
-    st.subheader("Hospital")
-
-    if tags:
-        a = st.selectbox("Animal", tags, key="h1")
-        act = st.selectbox("Action", ["Recover","Death","Culling"], key="h2")
-        r = st.text_input("Reason", key="h3")
-
-        if st.button("Execute", key="h4"):
-            if act == "Death":
-                execq("INSERT INTO DeathLogs VALUES (?,?,?)",
-                      (str(date.today()), a, r))
-                execq("UPDATE AnimalMaster SET Status='Dead' WHERE TagID=?", (a,))
-
-            elif act == "Culling":
-                execq("INSERT INTO CullingLogs VALUES (?,?,?)",
-                      (str(date.today()), a, r))
-                execq("UPDATE AnimalMaster SET Status='Culled' WHERE TagID=?", (a,))
-
+        with col2:
+            st.markdown("### 🧪 PD Section (Pregnancy Check)")
+            pending_pd = q("SELECT * FROM BreedingLogs WHERE PD_Status='Pending'")
+            if not pending_pd.empty:
+                pd_cow = st.selectbox("Select Cow for PD", pending_pd["CowTag"].unique())
+                pd_result = st.radio("PD Result", ["Pregnant", "Open (Repeat)"])
+                if st.button("Update PD Status"):
+                    exp_date = str(date.today() + timedelta(days=280)) if pd_result == "Pregnant" else "N/A"
+                    execq("UPDATE BreedingLogs SET PD_Status=?, ExpectedCalving=? WHERE CowTag=? AND PD_Status='Pending'", 
+                          (pd_result, exp_date, pd_cow))
+                    st.success(f"PD Updated! Expected Calving: {exp_date}")
             else:
-                execq("UPDATE AnimalMaster SET Status='Healthy' WHERE TagID=?", (a,))
+                st.write("No pending PD checks.")
 
-            st.success("Done")
+# ================= 4. CALVING (TWINS ENABLED) =================
+with tabs[3]:
+    st.subheader("🐣 Calving Registration (Twins Enabled)")
+    if tags:
+        c_cow = st.selectbox("Mother Tag", tags, key="calv_cow")
+        c_date = st.date_input("Calving Date")
+        sire = st.text_input("Sire (Father) Tag")
+        is_twins = st.checkbox("Is it Twins?")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("### Calf 1")
+            g1 = st.selectbox("Gender 1", ["Male", "Female"])
+            w1 = st.number_input("Weight 1 (kg)", min_value=0.0)
+        
+        if is_twins:
+            with col2:
+                st.markdown("### Calf 2")
+                g2 = st.selectbox("Gender 2", ["Male", "Female"])
+                w2 = st.number_input("Weight 2 (kg)", min_value=0.0)
 
-# ================= 8 MOVEMENT =================
+        if st.button("Save Calving"):
+            execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?,?)", (str(date.today()), c_cow, str(c_date), sire, g1, w1, "Single" if not is_twins else "Twin 1"))
+            if is_twins:
+                execq("INSERT INTO CalvingLogs VALUES (?,?,?,?,?,?,?)", (str(date.today()), c_cow, str(c_date), sire, g2, w2, "Twin 2"))
+            execq("UPDATE AnimalMaster SET Status='Lactating' WHERE TagID=?", (c_cow,))
+            st.success("Calving data and Mother status updated!")
+
+# ================= 5. VACCINATION =================
+with tabs[4]:
+    st.subheader("💉 Vaccination Management")
+    if tags:
+        v_tag = st.selectbox("Animal Tag", tags, key="vac_tag")
+        vac_name = st.selectbox("Vaccine", ["FMD", "HS", "Anthrax", "Lumpy", "Brucellosis"])
+        v_dose = st.text_input("Dose (ml/cc)")
+        if st.button("Update Vaccination"):
+            execq("INSERT INTO VaccineLogs VALUES (?,?,?,?,?)", (str(date.today()), v_tag, vac_name, v_dose, "Authorized Vet"))
+            st.success("Vaccination Logged!")
+
+# ================= 6. TREATMENT & HOSPITAL =================
+with tabs[5]:
+    st.subheader("🩺 Hospital & Sick Bay")
+    if tags:
+        col1, col2 = st.columns(2)
+        with col1:
+            t_tag = st.selectbox("Sick Animal", tags, key="treat_tag")
+            dis = st.text_input("Disease / Symptoms")
+            med = st.text_area("Medicine & Treatment Plan")
+            t_status = st.selectbox("Current Condition", ["Under Treatment", "Recovered", "Critical"])
+            if st.button("Save Treatment"):
+                execq("INSERT INTO TreatmentLogs VALUES (?,?,?,?,?,?)", (str(date.today()), t_tag, dis, med, "Dr. Zuni", t_status))
+                st.success("Treatment Record Saved!")
+        with col2:
+            st.markdown("### Active Sick List")
+            sick_list = q("SELECT AnimalTag, Disease, Status FROM TreatmentLogs WHERE Status != 'Recovered'")
+            st.table(sick_list)
+
+# ================= 7. MOVEMENT =================
+with tabs[6]:
+    st.subheader("🚚 Pen & Location Movement")
+    if tags:
+        m_tag = st.selectbox("Animal Tag", tags, key="mov_tag")
+        f_pen = st.text_input("From (Old Pen)")
+        t_pen = st.text_input("To (New Pen)")
+        reason = st.text_input("Reason for Movement")
+        if st.button("Log Movement"):
+            execq("INSERT INTO MovementLogs VALUES (?,?,?,?,?)", (str(date.today()), m_tag, f_pen, t_pen, reason))
+            st.success("Movement Recorded!")
+
+# ================= 8. DASHBOARD & REPORTS =================
 with tabs[7]:
-    st.subheader("Movement")
+    st.subheader("📊 Farm Performance Analytics")
+    if not animals.empty:
+        c1, c2 = st.columns(2)
+        with c1:
+            fig1 = px.pie(animals, names='Category', title='Herd Composition')
+            st.plotly_chart(fig1)
+        with c2:
+            fig2 = px.bar(animals, x='Breed', title='Breed Distribution')
+            st.plotly_chart(fig2)
+        
+        st.markdown("---")
+        st.markdown("### Summary Statistics")
+        st.write(f"Total Animals: {len(animals)} | Active Treatments: {len(q('SELECT * FROM TreatmentLogs WHERE Status != \"Recovered\"'))}")
+    else:
+        st.info("Add data to see charts.")
 
-    if tags:
-        a = st.selectbox("Animal", tags, key="m1")
-        p = st.text_input("Pen", key="m2")
-
-        if st.button("Move", key="m3"):
-            execq("INSERT INTO MovementLogs VALUES (?,?,?)",
-                  (str(date.today()), a, p))
-            st.success("Moved")
-
-# ================= 9 REPORTS =================
+# ================= 9. FULL HISTORY =================
 with tabs[8]:
-    st.subheader("Reports")
-
-    st.metric("Total", len(animals))
-    st.metric("Healthy", len(animals[animals["Status"]=="Healthy"]))
-    st.metric("Dead", len(animals[animals["Status"]=="Dead"]))
-    st.metric("Culled", len(animals[animals["Status"]=="Culled"]))
-
-# ================= 10 DASHBOARD =================
-with tabs[9]:
-    st.subheader("Dashboard")
-    st.success("System Running Perfect")
-    st.metric("Animals", len(animals))
-
-# ================= 11 FULL HISTORY =================
-with tabs[10]:
-    st.subheader("Full History")
-
-    if tags:
-        a = st.selectbox("Animal", tags, key="f1")
-
-        st.write("Breeding")
-        st.dataframe(q("SELECT * FROM BreedingLogs WHERE CowTag=?", (a,)))
-
-        st.write("Calving")
-        st.dataframe(q("SELECT * FROM CalvingLogs WHERE CowTag=?", (a,)))
-
-        st.write("Vaccination")
-        st.dataframe(q("SELECT * FROM VaccineLogs WHERE AnimalTag=?", (a,)))
-
-        st.write("Treatment")
-        st.dataframe(q("SELECT * FROM TreatmentLogs WHERE AnimalTag=?", (a,)))
+    st.subheader("📌 System Master Logs")
+    log_choice = st.selectbox("View History For:", ["Breeding", "Calving", "Vaccine", "Treatment", "Movement"])
+    
+    map_tables = {
+        "Breeding": "BreedingLogs", "Calving": "CalvingLogs",
+        "Vaccine": "VaccineLogs", "Treatment": "TreatmentLogs", "Movement": "MovementLogs"
+    }
+    
+    st.dataframe(q(f"SELECT * FROM {map_tables[log_choice]} ORDER BY Date DESC"), use_container_width=True)
