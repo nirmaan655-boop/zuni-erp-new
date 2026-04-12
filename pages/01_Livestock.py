@@ -71,24 +71,69 @@ with tabs[1]:
     m_hist = fetch_df(None, "SELECT rowid as ID, * FROM MilkProduction ORDER BY Date DESC LIMIT 10")
     st.dataframe(m_hist, use_container_width=True)
 
-# ================= 3. BREEDING & PD =================
+# ================= 3. BREEDING & PD (PRO SYNC) =================
 with tabs[2]:
-    st.subheader("Reproduction Records")
-    with st.form("br_form"):
-        b1, b2 = st.columns(2)
-        b_tag = b1.selectbox("Cow Tag", active_tags, key="br_cow")
-        mode = b2.radio("Mode", ["AI", "Natural"], horizontal=True)
-        source = b1.selectbox("Semen/Bull Name", semen_straws if mode=="AI" else bulls)
-        pd_res = b2.selectbox("PD Status", ["Pending", "Pregnant", "Open"])
-        if st.form_submit_button("Save Breeding"):
-            exp = str(date.today() + timedelta(days=280)) if pd_res == "Pregnant" else "N/A"
-            with db_connect() as conn:
-                conn.execute("INSERT INTO BreedingLogs (Date, TagID, Type, Semen, PD_Status, ExpectedCalving) VALUES (?,?,?,?,?,?)",
-                             (str(date.today()), b_tag, mode, source, pd_res, exp))
-                if pd_res == "Pregnant": conn.execute("UPDATE AnimalMaster SET Status='Pregnant' WHERE TagID=?", (b_tag,))
-                conn.commit()
-            st.rerun()
+    st.subheader("🧬 Reproduction & Breeding Bank")
+    
+    # 1. FETCH DATA (Semen from Inventory & Bulls from Herd)
+    with db_connect() as conn:
+        # Inventory se straws aur unki quantity uthana
+        semen_df = fetch_df(conn, "SELECT ItemName, Quantity FROM ItemMaster WHERE Category = 'Semen Straws' AND Quantity > 0")
+        # Semen list format: "Semen Name (Qty: 10)"
+        semen_options = [f"{r['ItemName']} (Qty: {int(r['Quantity'])})" for _, r in semen_df.iterrows()] if not semen_df.empty else []
+        
+        # Herd se Bulls ke TagID uthana
+        bull_list = fetch_df(conn, "SELECT TagID FROM AnimalMaster WHERE Category = 'Bull' AND Status != 'Sold'")['TagID'].tolist()
+
+    with st.form("br_form_pro"):
+        b1, b2, b3 = st.columns(3)
+        b_tag = b1.selectbox("Select Cow/Heifer", tags, key="br_cow")
+        b_mode = b2.radio("Breeding Mode", ["AI (Straw)", "Natural (Bull)"], horizontal=True)
+        
+        # --- DYNAMIC SELECTION LOGIC ---
+        if b_mode == "AI (Straw)":
+            if semen_options:
+                selected_semen_str = b3.selectbox("Select Semen Straw", semen_options)
+                # Naam alag karna (Qty hata kar)
+                actual_semen_name = selected_semen_str.split(" (Qty:")[0]
+            else:
+                actual_semen_name = None
+                b3.warning("⚠️ No Straws in Inventory!")
+        else:
+            if bull_list:
+                actual_semen_name = b3.selectbox("Select Bull Tag", bull_list)
+            else:
+                actual_semen_name = None
+                b3.error("❌ No Bull found in Herd!")
+            
+        b_vet = b1.text_input("Vet Name")
+        b_pd = b2.selectbox("PD Status", ["Pending", "Pregnant", "Open"])
+        
+        if st.form_submit_button("✅ Save Breeding Record"):
+            if actual_semen_name:
+                exp = str(date.today() + timedelta(days=280)) if b_pd == "Pregnant" else "N/A"
+                with db_connect() as conn:
+                    # 1. Log entry
+                    conn.execute("""INSERT INTO BreedingLogs (Date, TagID, Type, Semen, Vet, PD_Status, ExpectedCalving) 
+                                    VALUES (?,?,?,?,?,?,?)""", 
+                                 (str(date.today()), b_tag, b_mode, actual_semen_name, b_vet, b_pd, exp))
+                    
+                    # 2. Agar AI hai toh Inventory se 1 kam karna
+                    if b_mode == "AI (Straw)":
+                        conn.execute("UPDATE ItemMaster SET Quantity = Quantity - 1 WHERE ItemName = ?", (actual_semen_name,))
+                    
+                    # 3. Mother status update
+                    if b_pd == "Pregnant":
+                        conn.execute("UPDATE AnimalMaster SET Status='Pregnant' WHERE TagID=?", (b_tag,))
+                    
+                    conn.commit()
+                st.success(f"Record Saved! {actual_semen_name} matched with {b_tag}")
+                st.rerun()
+
+    st.write("---")
+    st.write("### 📜 Breeding History")
     st.dataframe(fetch_df(None, "SELECT * FROM BreedingLogs ORDER BY Date DESC"), use_container_width=True)
+
 
 # ================= 4. CALVING =================
 with tabs[3]:
