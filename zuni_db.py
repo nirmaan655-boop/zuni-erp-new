@@ -35,3 +35,26 @@ init_db()
 def fetch_df(conn_unused, query, params=()):
     with db_connect() as conn:
         return pd.read_sql_query(query, conn, params=params)
+        import sqlite3, os, pandas as pd
+
+DB_PATH = os.path.join(os.getcwd(), "zuni.db")
+
+def db_connect():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+def init_db():
+    with db_connect() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS AnimalMaster (TagID TEXT PRIMARY KEY, Category TEXT, Breed TEXT, Status TEXT, Weight REAL, PurchasePrice REAL, PurchaseDate TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS MilkProduction (Date TEXT, TagID TEXT, Morning REAL, Noon REAL, Evening REAL, Total REAL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS BreedingLogs (Date TEXT, TagID TEXT, Type TEXT, Semen TEXT, Vet TEXT, PD_Status TEXT, ExpectedCalving TEXT)")
+        # TotalCost column yahan fix kar diya hai
+        conn.execute("CREATE TABLE IF NOT EXISTS TreatmentLogs (Date TEXT, TagID TEXT, Disease TEXT, Medicine TEXT, Vet TEXT, Status TEXT, TotalCost REAL)")
+        conn.execute("CREATE TABLE IF NOT EXISTS ItemMaster (ItemName TEXT PRIMARY KEY, Category TEXT, UOM TEXT, Quantity REAL DEFAULT 0, Cost REAL DEFAULT 0, Store TEXT)")
+        conn.commit()
+
+init_db()
+
+def fetch_df(conn_unused, query, params=()):
+    with db_connect() as conn:
+        return pd.read_sql_query(query, conn, params=params)
+
