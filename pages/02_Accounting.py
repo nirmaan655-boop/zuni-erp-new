@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from zuni_db import db_connect, fetch_df
 from datetime import date
-import os
 
 # --- 1. PAGE CONFIG & BRANDING ---
 st.set_page_config(page_title="Zuni ERP | Financials", layout="wide")
@@ -25,13 +24,14 @@ if 'pmt_rows' not in st.session_state:
 if 'jv_rows' not in st.session_state:
     st.session_state.jv_rows = [{"Acc": "", "Dr": 0.0, "Cr": 0.0, "Nar": ""}, {"Acc": "", "Dr": 0.0, "Cr": 0.0, "Nar": ""}]
 
-# --- 3. FETCH DATA ---
+# --- 3. FETCH DATA (MAPPING ALL HEADS) ---
 with db_connect() as conn:
     acc_df = fetch_df(conn, "SELECT AccountName, AccountType, Balance FROM ChartOfAccounts")
     try: vendors = fetch_df(conn, "SELECT VendorName as Name FROM VendorMaster")['Name'].tolist()
     except: vendors = []
     try: employees = fetch_df(conn, "SELECT Name FROM EmployeeMaster")['Name'].tolist()
     except: employees = []
+    
     all_heads = sorted(list(set(acc_df['AccountName'].tolist() + vendors + employees + ["Milk Sale", "Feed Expense", "General Expense"])))
 
 # --- 4. TABS SYSTEM ---
@@ -86,25 +86,19 @@ with tab1:
                 st.session_state.pmt_rows = [{"Account": "", "Amount": 0.0, "Narration": ""}]
                 st.rerun()
 
-    else: # --- JV ENTRY ---
+    else: # --- JOURNAL TRANSACTION (JV) ---
         with st.container(border=True):
             jc1, jc2, jc3 = st.columns([1.5, 3, 1.5])
-            jv_inv = jc1.text_input("Invoice No", placeholder="e.g. 22917")
-            jv_date = jc1.date_input("Date", date.today(), key="jv_dt")
-            jv_main_nar = jc2.text_area("Main Narration", height=90)
-            if jc3.button("➕ Add Items", use_container_width=True, type="primary"):
+            jv_date = jc1.date_input("JV Date", date.today(), key="jv_dt")
+            jv_main_nar = jc2.text_area("Main Narration", placeholder="Details of JV...", height=90)
+            if jc3.button("➕ Add JV Line", use_container_width=True, type="primary"):
                 st.session_state.jv_rows.append({"Acc": "", "Dr": 0.0, "Cr": 0.0, "Nar": ""})
                 st.rerun()
 
         updated_jv = []
         for i, row in enumerate(st.session_state.jv_rows):
-            r1, r2, r3, r4, r5, r6 = st.columns([2.5, 1.2, 1.2, 1, 1, 2.5])
+            r1, r2, r3, r4, r5, r6 = st.columns([2.5, 1, 1, 1, 1, 2.5])
             acc = r1.selectbox(f"jv_acc_{i}", [""] + all_heads, key=f"jv_sel_{i}", label_visibility="collapsed")
-            info = acc_df[acc_df['AccountName'] == acc]
-            cur_bal = info['Balance'].iloc[0] if not info.empty else 0
-            acc_type = info['AccountType'].iloc[0] if not info.empty else '-'
-            r2.write(f"{cur_bal:,.0f}")
-            r3.write(f"{acc_type}")
             dr = r4.number_input(f"dr_{i}", value=row['Dr'], key=f"jv_dr_{i}", label_visibility="collapsed")
             cr = r5.number_input(f"cr_{i}", value=row['Cr'], key=f"jv_cr_{i}", label_visibility="collapsed")
             nar = r6.text_input(f"nar_{i}", value=row['Nar'], key=f"jv_nar_{i}", label_visibility="collapsed")
@@ -124,17 +118,39 @@ with tab1:
                 st.session_state.jv_rows = [{"Acc": "", "Dr": 0.0, "Cr": 0.0, "Nar": ""}, {"Acc": "", "Dr": 0.0, "Cr": 0.0, "Nar": ""}]
                 st.rerun()
 
-# --- TAB 4: HISTORY (FIXED) ---
+# --- TAB 2: PARTY LEDGER ---
+with tab2:
+    st.subheader("📖 Party Wise Statement")
+    target_party = st.selectbox("Select Party", [""] + all_heads)
+    if target_party:
+        with db_connect() as conn:
+            ledger_df = fetch_df(conn, "SELECT Date, Description, Debit, Credit FROM Transactions WHERE AccountName = ? OR PayeeName = ? ORDER BY Date ASC", (target_party, target_party))
+            if not ledger_df.empty:
+                ledger_df['Balance'] = (ledger_df['Debit'] - ledger_df['Credit']).cumsum()
+                st.dataframe(ledger_df, use_container_width=True, hide_index=True)
+                st.metric("Final Balance", f"Rs. {ledger_df['Balance'].iloc[-1]:,.0f}")
+            else:
+                st.info("No Transactions found for this party.")
+
+# --- TAB 3: REPORTS ---
+with tab3:
+    st.subheader("📊 Financial Summary")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("### 🏦 Cash/Bank Status")
+        st.table(acc_df[acc_df['AccountType'].isin(['Cash In Hand', 'Bank Account'])][['AccountName', 'Balance']])
+    with c2:
+        st.write("### 📄 Trial Balance")
+        st.dataframe(acc_df[['AccountName', 'AccountType', 'Balance']], hide_index=True)
+
+# --- TAB 4: HISTORY ---
 with tab4:
-    st.subheader("📜 Recent History")
+    st.subheader("📜 Recent Transactions")
     with db_connect() as conn:
-        # 'TransactionID' ko hata kar 'id' kiya gaya hai
-        history = fetch_df(conn, "SELECT id, Date, AccountName, Description, Debit, Credit FROM Transactions ORDER BY id DESC LIMIT 30")
+        history = fetch_df(conn, "SELECT id, Date, AccountName, Description, Debit, Credit FROM Transactions ORDER BY id DESC LIMIT 50")
         if not history.empty:
             st.dataframe(history, use_container_width=True, hide_index=True)
             if st.button("🗑️ Delete Last Transaction"):
                 conn.execute("DELETE FROM Transactions WHERE id = (SELECT MAX(id) FROM Transactions)")
                 conn.commit()
                 st.rerun()
-        else:
-            st.info("No Transactions found.")
