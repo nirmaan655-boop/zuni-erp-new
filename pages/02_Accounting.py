@@ -164,7 +164,8 @@ with tab3:
 with tab4:
     st.subheader("📜 Recent History & Edit")
     with db_connect() as conn:
-        history = fetch_df(conn, "SELECT TransactionID, Date, AccountName, Description, Debit, Credit FROM Transactions ORDER BY TransactionID DESC LIMIT 30")
+# 'TransactionID' ko hata kar 'id' kar dein
+history = fetch_df(conn, "SELECT id, Date, AccountName, Description, Debit, Credit FROM Transactions ORDER BY id DESC LIMIT 30")
         if not history.empty:
             for _, row in history.iterrows():
                 with st.expander(f"Txn #{row['TransactionID']} | {row['Date']} | {row['AccountName']} | Rs. {max(row['Debit'], row['Credit']):,.0f}"):
