@@ -72,63 +72,70 @@ with tabs[1]:
     st.dataframe(m_hist, use_container_width=True)
 
 # ================= 3. BREEDING & PD (PRO SYNC) =================
-with tabs[2]:
+with tabs[2]:  # Index 2 Breeding ke liye hai
     st.subheader("🧬 Reproduction & Breeding Bank")
     
     # 1. FETCH DATA (Semen from Inventory & Bulls from Herd)
     with db_connect() as conn:
         # Inventory se straws aur unki quantity uthana
         semen_df = fetch_df(conn, "SELECT ItemName, Quantity FROM ItemMaster WHERE Category = 'Semen Straws' AND Quantity > 0")
-        # Semen list format: "Semen Name (Qty: 10)"
         semen_options = [f"{r['ItemName']} (Qty: {int(r['Quantity'])})" for _, r in semen_df.iterrows()] if not semen_df.empty else []
         
         # Herd se Bulls ke TagID uthana
         bull_list = fetch_df(conn, "SELECT TagID FROM AnimalMaster WHERE Category = 'Bull' AND Status != 'Sold'")['TagID'].tolist()
+        
+        # Cows list (tags variable ko dobara define kar dete hain safety ke liye)
+        cows_df = fetch_df(conn, "SELECT TagID FROM AnimalMaster WHERE Category IN ('Cow', 'Heifer') AND Status NOT IN ('Sold', 'Death')")
+        tags_list = cows_df['TagID'].tolist() if not cows_df.empty else []
 
+    # Form Shuru
     with st.form("br_form_pro"):
         b1, b2, b3 = st.columns(3)
-        b_tag = b1.selectbox("Select Cow/Heifer", tags, key="br_cow")
+        
+        # Animal Selection
+        b_tag = b1.selectbox("Select Cow/Heifer", tags_list, key="br_cow_select")
+        
+        # Mode Selection
         b_mode = b2.radio("Breeding Mode", ["AI (Straw)", "Natural (Bull)"], horizontal=True)
         
-        # --- DYNAMIC SELECTION LOGIC ---
+        # Dynamic Selection for Semen/Bull
         if b_mode == "AI (Straw)":
-            if semen_options:
-                selected_semen_str = b3.selectbox("Select Semen Straw", semen_options)
-                # Naam alag karna (Qty hata kar)
-                actual_semen_name = selected_semen_str.split(" (Qty:")[0]
-            else:
-                actual_semen_name = None
-                b3.warning("⚠️ No Straws in Inventory!")
+            actual_semen_name = b3.selectbox("Select Semen Straw", semen_options if semen_options else ["No Stock"])
         else:
-            if bull_list:
-                actual_semen_name = b3.selectbox("Select Bull Tag", bull_list)
-            else:
-                actual_semen_name = None
-                b3.error("❌ No Bull found in Herd!")
+            actual_semen_name = b3.selectbox("Select Bull Tag", bull_list if bull_list else ["No Bull Found"])
             
         b_vet = b1.text_input("Vet Name")
         b_pd = b2.selectbox("PD Status", ["Pending", "Pregnant", "Open"])
         
-        if st.form_submit_button("✅ Save Breeding Record"):
-            if actual_semen_name:
+        # SUBMIT BUTTON (Error Fix)
+        submit_breeding = st.form_submit_button("✅ Save Breeding Record")
+        
+        if submit_breeding:
+            if b_tag and "No" not in str(actual_semen_name):
+                # Cleaning name to get only ItemName from "ItemName (Qty: 10)"
+                clean_semen_name = str(actual_semen_name).split(" (Qty:")[0]
+                
                 exp = str(date.today() + timedelta(days=280)) if b_pd == "Pregnant" else "N/A"
+                
                 with db_connect() as conn:
                     # 1. Log entry
                     conn.execute("""INSERT INTO BreedingLogs (Date, TagID, Type, Semen, Vet, PD_Status, ExpectedCalving) 
                                     VALUES (?,?,?,?,?,?,?)""", 
-                                 (str(date.today()), b_tag, b_mode, actual_semen_name, b_vet, b_pd, exp))
+                                 (str(date.today()), b_tag, b_mode, clean_semen_name, b_vet, b_pd, exp))
                     
                     # 2. Agar AI hai toh Inventory se 1 kam karna
                     if b_mode == "AI (Straw)":
-                        conn.execute("UPDATE ItemMaster SET Quantity = Quantity - 1 WHERE ItemName = ?", (actual_semen_name,))
+                        conn.execute("UPDATE ItemMaster SET Quantity = Quantity - 1 WHERE ItemName = ?", (clean_semen_name,))
                     
-                    # 3. Mother status update
+                    # 3. Status update
                     if b_pd == "Pregnant":
                         conn.execute("UPDATE AnimalMaster SET Status='Pregnant' WHERE TagID=?", (b_tag,))
                     
                     conn.commit()
-                st.success(f"Record Saved! {actual_semen_name} matched with {b_tag}")
+                st.success(f"Record Saved for {b_tag}!")
                 st.rerun()
+            else:
+                st.error("Please select valid Animal and Semen/Bull")
 
     st.write("---")
     st.write("### 📜 Breeding History")
