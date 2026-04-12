@@ -33,7 +33,12 @@ with tabs[0]:
         milk_data = fetch_df(None, f"SELECT SUM(Total) as total FROM MilkProduction WHERE TagID='{sel_tag}'")
         treat_data = fetch_df(None, f"SELECT SUM(TotalCost) as cost FROM TreatmentLogs WHERE TagID='{sel_tag}'")
         
-        total_milk = milk_data['total'].iloc[0] if milk_data['total'].iloc[0] else 0
+        # Purani line 36 hata kar ye likhein:
+if not milk_data.empty and 'total' in milk_data.columns:
+    total_milk = milk_data['total'].iloc[0] if pd.notnull(milk_data['total'].iloc[0]) else 0
+else:
+    total_milk = 0
+
         total_med_cost = treat_data['cost'].iloc[0] if treat_data['cost'].iloc[0] else 0
         
         # Revenue @ 210 per liter
