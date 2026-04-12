@@ -27,22 +27,42 @@ tabs = st.tabs(["📊 COW CARD (P&L)", "🥛 MILK PRODUCTION", "🧬 BREEDING", 
 with tabs[0]:
     st.subheader("Individual Animal Performance & Profitability")
     if tags:
+      # ================= 1. COW CARD (ANIMAL WISE P/L) =================
+with tabs:
+    st.subheader("Performance & Profitability")
+    if tags:
         sel_tag = st.selectbox("Select Animal", tags, key="p_l_tag")
         
-        # Calculations
-        milk_data = fetch_df(None, f"SELECT SUM(Total) as total FROM MilkProduction WHERE TagID='{sel_tag}'")
-        treat_data = fetch_df(None, f"SELECT SUM(TotalCost) as cost FROM TreatmentLogs WHERE TagID='{sel_tag}'")
+        # Milk Revenue Calculation
+        m_data = fetch_df(None, f"SELECT SUM(Total) as total FROM MilkProduction WHERE TagID='{sel_tag}'")
         
-        # Purani line 36 hata kar ye likhein:
-if not milk_data.empty and 'total' in milk_data.columns:
-    total_milk = milk_data['total'].iloc[0] if pd.notnull(milk_data['total'].iloc[0]) else 0
-else:
-    total_milk = 0
+        # Safe Check for Milk Data
+        if not m_data.empty and 'total' in m_data.columns:
+            total_milk = m_data['total'].iloc[0] if m_data['total'].iloc[0] is not None else 0.0
+        else:
+            total_milk = 0.0
+            
+        # Treatment Cost Calculation
+        t_data = fetch_df(None, f"SELECT SUM(TotalCost) as cost FROM TreatmentLogs WHERE TagID='{sel_tag}'")
+        
+        if not t_data.empty and 'cost' in t_data.columns:
+            med_cost = t_data['cost'].iloc[0] if t_data['cost'].iloc[0] is not None else 0.0
+        else:
+            med_cost = 0.0
+        
+        rev = total_milk * 210 
+        net_p = rev - med_cost
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Milk", f"{total_milk} L")
+        c2.metric("Revenue", f"Rs. {rev:,.0f}")
+        c3.metric("Med Cost", f"Rs. {med_cost:,.0f}")
+        c4.metric("Profit/Loss", f"Rs. {net_p:,.0f}", delta=float(net_p))
+        
+        st.dataframe(animals_df[animals_df['TagID'] == sel_tag], use_container_width=True)
+    else:
+        st.warning("No animals found in database.")
 
-        total_med_cost = treat_data['cost'].iloc[0] if treat_data['cost'].iloc[0] else 0
-        
-        # Revenue @ 210 per liter
-        revenue = total_milk * 210 
         profit = revenue - total_med_cost
         
         c1, c2, c3, c4 = st.columns(4)
