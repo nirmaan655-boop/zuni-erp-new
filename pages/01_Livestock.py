@@ -1,166 +1,69 @@
 import streamlit as st
 import pandas as pd
 from zuni_db import db_connect, fetch_df
-from datetime import date
+from datetime import date, timedelta
 
-st.set_page_config(layout="wide", page_title="Zuni Dairy Pro")
+st.set_page_config(layout="wide")
+st.title("🐄 LIVESTOCK MANAGEMENT PRO")
 
-# --- DATA FETCHING ---
+# FETCH DATA FOR DROPDOWNS
 with db_connect() as conn:
-    animals_df = fetch_df(conn, "SELECT * FROM AnimalMaster")
-    tags = animals_df[animals_df['Status'] != 'Sold']['TagID'].tolist()
-    bulls = animals_df[animals_df['Category'] == 'Bull']['TagID'].tolist()
-    
-    # Inventory items
-    inventory = fetch_df(conn, "SELECT ItemName, Category, UOM, Cost FROM ItemMaster")
-    medicines = inventory[inventory['Category'] == 'Medicine']
-    semen_straws = inventory[inventory['Category'] == 'Semen Straws']['ItemName'].tolist()
-    
-    # Feed Rates for P&L
-    feed_items = inventory[inventory['Category'] == 'Feed']
+    all_animals = fetch_df(None, "SELECT * FROM AnimalMaster")
+    active_tags = all_animals[all_animals['Status'].isin(['Active', 'Sick', 'Lactating'])]['TagID'].tolist()
+    inv_items = fetch_df(None, "SELECT ItemName, Category, Cost FROM ItemMaster")
+    semen = inv_items[inv_items['Category'] == 'Semen Straws']['ItemName'].tolist()
+    meds = inv_items[inv_items['Category'] == 'Medicine']
 
-st.markdown("<h1 style='text-align: center; color: #FF851B;'>🐄 LIVESTOCK PRO CONTROL (SYNCED)</h1>", unsafe_allow_html=True)
+tabs = st.tabs(["📋 INVENTORY", "🥛 MILK (3-SHIFT)", "🧬 BREEDING", "🩺 HOSPITAL", "📉 REMOVAL"])
 
-tabs = st.tabs(["📊 COW CARD (P&L)", "🥛 MILK PRODUCTION", "🧬 BREEDING", "🩺 HOSPITAL (4-MED)", "🚚 MOVEMENT", "📉 REMOVAL"])
+with tabs[0]: # INVENTORY
+    st.dataframe(all_animals, use_container_width=True)
 
-# ================= 1. COW CARD (ANIMAL WISE P/L) =================
-with tabs[0]:
-    st.subheader("Individual Animal Performance & Profitability")
-    if tags:
-      # ================= 1. COW CARD (ANIMAL WISE P/L) =================
-with tabs:
-    st.subheader("Performance & Profitability")
-    if tags:
-        sel_tag = st.selectbox("Select Animal", tags, key="p_l_tag")
-        
-        # Milk Revenue Calculation
-        m_data = fetch_df(None, f"SELECT SUM(Total) as total FROM MilkProduction WHERE TagID='{sel_tag}'")
-        
-        # Safe Check for Milk Data
-        if not m_data.empty and 'total' in m_data.columns:
-            total_milk = m_data['total'].iloc[0] if m_data['total'].iloc[0] is not None else 0.0
-        else:
-            total_milk = 0.0
-            
-        # Treatment Cost Calculation
-        t_data = fetch_df(None, f"SELECT SUM(TotalCost) as cost FROM TreatmentLogs WHERE TagID='{sel_tag}'")
-        
-        if not t_data.empty and 'cost' in t_data.columns:
-            med_cost = t_data['cost'].iloc[0] if t_data['cost'].iloc[0] is not None else 0.0
-        else:
-            med_cost = 0.0
-        
-        rev = total_milk * 210 
-        net_p = rev - med_cost
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Milk", f"{total_milk} L")
-        c2.metric("Revenue", f"Rs. {rev:,.0f}")
-        c3.metric("Med Cost", f"Rs. {med_cost:,.0f}")
-        c4.metric("Profit/Loss", f"Rs. {net_p:,.0f}", delta=float(net_p))
-        
-        st.dataframe(animals_df[animals_df['TagID'] == sel_tag], use_container_width=True)
-    else:
-        st.warning("No animals found in database.")
-
-        profit = revenue - total_med_cost
-        
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Milk (Ltr)", f"{total_milk:,.1f}")
-        c2.metric("Milk Revenue", f"Rs. {revenue:,.0f}")
-        c3.metric("Medicine Expense", f"Rs. {total_med_cost:,.0f}")
-        c4.metric("Net Profit/Loss", f"Rs. {profit:,.0f}", delta=float(profit))
-        
-        st.divider()
-        st.write("### Animal Profile")
-        st.dataframe(animals_df[animals_df['TagID'] == sel_tag], use_container_width=True)
-
-# ================= 2. MILK PRODUCTION (3-TIME) =================
-with tabs[1]:
-    st.subheader("🥛 Daily Yield (Morning/Noon/Evening)")
-    with st.form("milk_form"):
-        m1, m2, m3 = st.columns(3)
-        m_tag = m1.selectbox("Animal", tags, key="m_tag")
-        m_date = m2.date_input("Date", date.today())
-        
-        c1, c2, c3 = st.columns(3)
-        m_m = c1.number_input("Morning", 0.0)
-        m_n = c2.number_input("Noon", 0.0)
-        m_e = c3.number_input("Evening", 0.0)
-        
+with tabs[1]: # MILK PRODUCTION
+    with st.form("milk_f"):
+        c1, c2 = st.columns(2)
+        m_tag = c1.selectbox("Select Animal", active_tags)
+        m_date = c2.date_input("Date", date.today())
+        s1, s2, s3 = st.columns(3)
+        morning = s1.number_input("Morning")
+        noon = s2.number_input("Noon")
+        evening = s3.number_input("Evening")
         if st.form_submit_button("Save Milk"):
-            total = m_m + m_n + m_e
+            total = morning + noon + evening
             with db_connect() as conn:
-                conn.execute("INSERT INTO MilkProduction VALUES (?,?,?,?,?,?)", (str(m_date), m_tag, m_m, m_n, m_e, total))
+                conn.execute("INSERT INTO MilkProduction VALUES (?,?,?,?,?,?)", (str(m_date), m_tag, morning, noon, evening, total))
                 conn.commit()
             st.rerun()
+    st.dataframe(fetch_df(None, "SELECT * FROM MilkProduction ORDER BY Date DESC"), use_container_width=True)
 
-# ================= 3. BREEDING (AUTO INVENTORY LINK) =================
-with tabs[2]:
-    st.subheader("🧬 Breeding Bank Integration")
-    with st.form("breeding_pro"):
-        col1, col2 = st.columns(2)
-        b_tag = col1.selectbox("Select Cow", tags, key="b_cow")
-        b_mode = col2.radio("Breeding Mode", ["AI (Semen Straw)", "Natural (Bull)"], horizontal=True)
-        
-        if b_mode == "AI (Semen Straw)":
-            b_semen = col1.selectbox("Select Semen Straw (From Inventory)", semen_straws if semen_straws else ["No Stock"])
-        else:
-            b_semen = col1.selectbox("Select Bull (From Herd)", bulls if bulls else ["No Bull in Herd"])
-            
-        b_vet = col2.text_input("Vet Name")
+with tabs[2]: # BREEDING
+    with st.form("breed_f"):
+        b_tag = st.selectbox("Cow Tag", active_tags)
+        b_mode = st.radio("Mode", ["AI", "Natural"], horizontal=True)
+        s_source = st.selectbox("Semen/Bull Name", semen if b_mode == "AI" else active_tags)
         if st.form_submit_button("Record Breeding"):
             with db_connect() as conn:
-                conn.execute("INSERT INTO BreedingLogs (Date, TagID, Type, Semen, Vet, PD_Status) VALUES (?,?,?,?,?,?)",
-                             (str(date.today()), b_tag, b_mode, b_semen, b_vet, "Pending"))
-                if b_mode == "AI (Semen Straw)":
-                    conn.execute("UPDATE ItemMaster SET Quantity = Quantity - 1 WHERE ItemName=?", (b_semen,))
+                conn.execute("INSERT INTO BreedingLogs (Date, TagID, Type, Semen, PD_Status) VALUES (?,?,?,?,?)", 
+                             (str(date.today()), b_tag, b_mode, s_source, "Pending"))
+                if b_mode == "AI":
+                    conn.execute("UPDATE ItemMaster SET Quantity = Quantity - 1 WHERE ItemName=?", (s_source,))
                 conn.commit()
-            st.success("Breeding recorded and Straw deducted!")
+            st.success("Breeding & Inventory Updated!")
 
-# ================= 4. HOSPITAL (4 MEDICINE LOGIC) =================
-with tabs[3]:
-    st.subheader("🩺 Advanced Hospitalization (Multi-Medicine)")
-    with st.form("hospital_pro"):
-        h1, h2 = st.columns(2)
-        h_tag = h1.selectbox("Sick Animal", tags, key="h_tag")
-        h_dis = h2.text_input("Disease Name")
-        
-        st.write("### 💊 Treatment (Select up to 4 Medicines)")
-        med_list = medicines['ItemName'].tolist() if not medicines.empty else ["No Med"]
-        
-        total_treatment_cost = 0
-        med_entries = []
-        
-        # 4 Medicine Rows
-        for i in range(4):
-            r1, r2, r3 = st.columns([3,2,2])
-            m_name = r1.selectbox(f"Medicine {i+1}", ["None"] + med_list, key=f"med_{i}")
-            m_qty = r2.number_input(f"Qty {i+1}", 0.0, key=f"qty_{i}")
-            
+with tabs[3]: # HOSPITAL (MULTI-MED)
+    with st.form("hosp_f"):
+        h_tag = st.selectbox("Sick Animal", active_tags)
+        dis = st.text_input("Disease")
+        total_cost = 0
+        for i in range(2): # 2 Medicines for demo
+            m_col, q_col = st.columns(2)
+            m_name = m_col.selectbox(f"Medicine {i+1}", ["None"] + meds['ItemName'].tolist())
+            m_qty = q_col.number_input(f"Qty {i+1}")
             if m_name != "None":
-                med_info = medicines[medicines['ItemName'] == m_name].iloc[0]
-                cost = m_qty * med_info['Cost']
-                total_treatment_cost += cost
-                r3.write(f"Unit: {med_info['UOM']} | Cost: {cost:,.0f}")
-                med_entries.append((m_name, m_qty))
-
-        st.markdown(f"### Total Treatment Cost: **Rs. {total_treatment_cost:,.0f}**")
-        
-        if st.form_submit_button("Post Treatment & Deduct Inventory"):
+                rate = meds[meds['ItemName'] == m_name]['Cost'].iloc[0]
+                total_cost += (rate * m_qty)
+        if st.form_submit_button("Post Treatment"):
             with db_connect() as conn:
-                conn.execute("INSERT INTO TreatmentLogs (Date, TagID, Disease, TotalCost, Status) VALUES (?,?,?,?,?)",
-                             (str(date.today()), h_tag, h_dis, total_treatment_cost, "Under Treatment"))
-                for m, q in med_entries:
-                    conn.execute("UPDATE ItemMaster SET Quantity = Quantity - ? WHERE ItemName=?", (q, m))
+                conn.execute("INSERT INTO TreatmentLogs (Date, TagID, Disease, TotalCost, Status) VALUES (?,?,?,?,?)", (str(date.today()), h_tag, dis, total_cost, "Under Treatment"))
                 conn.commit()
-            st.success("Medicine used and Stock updated!")
-
-# ================= 5. MOVEMENT & 6. REMOVAL (Summary) =================
-with tabs[4]:
-    st.write("### Movement History")
-    st.dataframe(fetch_df(None, "SELECT * FROM MovementLogs"), use_container_width=True)
-
-with tabs[5]:
-    st.write("### Death / Sold Archives")
-    st.dataframe(animals_df[animals_df['Status'].isin(['Death', 'Sold', 'Culled'])], use_container_width=True)
+            st.rerun()
