@@ -143,14 +143,48 @@ with tab3:
         st.write("### 📄 Trial Balance")
         st.dataframe(acc_df[['AccountName', 'AccountType', 'Balance']], hide_index=True)
 
-# --- TAB 4: HISTORY ---
+# --- TAB 4: HISTORY & EDIT (FIXED) ---
 with tab4:
-    st.subheader("📜 Recent Transactions")
+    st.subheader("📜 Recent Transactions History")
+    
     with db_connect() as conn:
-        history = fetch_df(conn, "SELECT id, Date, AccountName, Description, Debit, Credit FROM Transactions ORDER BY id DESC LIMIT 50")
-        if not history.empty:
-            st.dataframe(history, use_container_width=True, hide_index=True)
-            if st.button("🗑️ Delete Last Transaction"):
-                conn.execute("DELETE FROM Transactions WHERE id = (SELECT MAX(id) FROM Transactions)")
-                conn.commit()
-                st.rerun()
+        # 'TransactionID' ko hata kar 'id' use kiya hai taake error na aaye
+        query = """
+            SELECT id, Date, AccountName, PayeeName, Description, Debit, Credit 
+            FROM Transactions 
+            ORDER BY id DESC 
+            LIMIT 50
+        """
+        history_df = fetch_df(conn, query)
+
+    if not history_df.empty:
+        st.dataframe(history_df, use_container_width=True, hide_index=True)
+        
+        st.divider()
+        st.subheader("🛠️ Reverse/Delete Transaction")
+        
+        col_del1, col_del2 = st.columns([2, 1])
+        # User se ID poochenge jo delete karni hai
+        target_id = col_del1.number_input("Enter Transaction ID to Reverse", min_value=1, step=1)
+        
+        if col_del2.button("🗑️ REVERSE ENTRY", use_container_width=True, type="secondary"):
+            with db_connect() as conn:
+                # 1. Pehle us entry ka data nikaalte hain balance wapis karne ke liye
+                entry = conn.execute("SELECT AccountName, Debit, Credit FROM Transactions WHERE id=?", (target_id,)).fetchone()
+                
+                if entry:
+                    acc_name, dr, cr = entry
+                    # 2. Chart of Accounts mein balance reverse karte hain
+                    # Agar Debit thi toh balance kam karenge, agar Credit thi toh barhayenge
+                    conn.execute("UPDATE ChartOfAccounts SET Balance = Balance - ? + ? WHERE AccountName = ?", (dr, cr, acc_name))
+                    
+                    # 3. Entry delete kar dete hain
+                    conn.execute("DELETE FROM Transactions WHERE id=?", (target_id,))
+                    conn.commit()
+                    
+                    st.error(f"Entry ID {target_id} has been Reversed!")
+                    st.rerun()
+                else:
+                    st.warning("Invalid ID! Entry not found.")
+    else:
+        st.info("No transaction history available.")
