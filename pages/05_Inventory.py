@@ -3,143 +3,174 @@ import pandas as pd
 import sqlite3
 import os
 
-# --- 1. DATABASE SETUP & LINKING ---
+# --- 1. DATABASE SETUP ---
 def get_connection():
     db_path = os.path.join(os.getcwd(), 'Zuni.db')
     conn = sqlite3.connect(db_path, check_same_thread=False)
-    # Master Table (Stock, Rates, Units)
+    # Master Table
     conn.execute("""CREATE TABLE IF NOT EXISTS ItemMaster (
         ItemName TEXT PRIMARY KEY, Category TEXT, UOM TEXT, 
         Quantity REAL DEFAULT 0, Cost REAL DEFAULT 0)""")
-    # Multi-Ingredient Recipe Table
+    # Professional Recipe Table
     conn.execute("""CREATE TABLE IF NOT EXISTS FeedRecipes (
-        RecipeName TEXT, ItemName TEXT, 
-        QtyPerAnimal REAL, TotalAnimals INTEGER,
+        RecipeName TEXT, ItemName TEXT, Qty REAL, 
+        Mandatory TEXT, TotalAnimals INTEGER,
         PRIMARY KEY (RecipeName, ItemName))""")
     conn.commit()
     return conn
 
 conn = get_connection()
 
-# --- APP CONFIG & BRANDING ---
-st.set_page_config(page_title="Zuni ERP Master", layout="wide")
+# --- 2. LAYOUT & BRANDING ---
+st.set_page_config(page_title="Zuni Pro ERP", layout="wide")
+
 st.markdown("""
-    <div style='background-color: #001F3F; padding: 20px; border-radius: 10px; border-left: 10px solid #FF851B;'>
+    <div style='background-color: #001F3F; padding: 15px; border-radius: 10px; border-bottom: 5px solid #FF851B; margin-bottom: 20px;'>
         <h1 style='color: white; margin: 0;'>📦 ZUNI <span style='color: #FF851B;'>PRO ERP MASTER</span></h1>
-        <p style='color: #FF851B;'>Inventory Linked with Precision Nutrition</p>
+        <p style='color: #FF851B; margin: 0;'>Enterprise Resource Planning | Professional Feed & Inventory</p>
     </div>
     """, unsafe_allow_html=True)
 
-# --- FETCH REFRESHED DATA ---
+# --- 3. DATA REFRESH ---
 stock_df = pd.read_sql("SELECT * FROM ItemMaster", conn)
 recipes_df = pd.read_sql("SELECT * FROM FeedRecipes", conn)
 
-# --- NAVIGATION TABS ---
-t1, t2, t3, t4, t5, t6, t7 = st.tabs([
-    "🌾 FEED RECIPES", "💊 MEDICINES", "🧬 SEMEN BANK", 
-    "⛽ GENERAL STORE", "💰 COSTING & P&L", "📊 FULL STOCK", "➕ REGISTER NEW"
+# --- 4. NAVIGATION TABS ---
+t1, t2, t3, t4, t5, t6 = st.tabs([
+    "🥗 RECIPE MANAGEMENT", 
+    "📊 LIVE STOCK (INVENTORY)", 
+    "💊 MEDICINES & SEMEN", 
+    "💰 COSTING / P&L", 
+    "➕ REGISTER NEW ITEM",
+    "⛽ GENERAL STORE"
 ])
 
-# --- TAB 1: FEED RECIPES (LINKED TO STOCK) ---
+# --- TAB 1: PROFESSIONAL RECIPE (IMAGE STYLE) ---
 with t1:
-    col1, col2 = st.columns([1, 2])
+    col_list, col_main = st.columns([1, 3])
     
-    with col1:
-        st.subheader("🛠️ Build Mix")
-        ex_recipes = recipes_df['RecipeName'].unique().tolist() if not recipes_df.empty else []
-        r_choice = st.selectbox("Select Recipe Group", ["+ NEW GROUP"] + ex_recipes)
-        r_name = st.text_input("Group Name").upper() if r_choice == "+ NEW GROUP" else r_choice
+    with col_list:
+        st.write("### 📂 Recipes")
+        search_r = st.text_input("🔍 Search...", "").upper()
+        unique_r = recipes_df['RecipeName'].unique().tolist() if not recipes_df.empty else []
         
-        with st.form("add_item_to_mix"):
-            feed_items = stock_df[stock_df['Category']=='Feed']['ItemName'].tolist()
-            f_item = st.selectbox("Ingredient", feed_items if feed_items else ["Wanda"])
-            f_qty = st.number_input("KG / Animal", min_value=0.0, step=0.5)
-            # Maintain animal count across group
-            existing_count = int(recipes_df[recipes_df['RecipeName']==r_name]['TotalAnimals'].iloc[0]) if not recipes_df[recipes_df['RecipeName']==r_name].empty else 10
-            f_count = st.number_input("Total Animals", min_value=1, value=existing_count)
-            
-            if st.form_submit_button("➕ Add to Mix"):
-                if r_name and f_item:
-                    conn.execute("UPDATE FeedRecipes SET TotalAnimals = ? WHERE RecipeName = ?", (f_count, r_name))
-                    conn.execute("INSERT OR REPLACE INTO FeedRecipes VALUES (?,?,?,?)", (r_name, f_item, f_qty, f_count))
-                    conn.commit()
+        # Sidebar-style list
+        selected_r = st.session_state.get('sel_recipe', None)
+        for r in unique_r:
+            if search_r in r:
+                if st.button(f"📄 {r}", key=f"btn_{r}", use_container_width=True):
+                    st.session_state.sel_recipe = r
                     st.rerun()
+        
+        if st.button("➕ CREATE NEW", type="primary", use_container_width=True):
+            st.session_state.sel_recipe = "NEW"
+            st.rerun()
 
-    with col2:
-        st.subheader("📋 Active Rations")
-        if not recipes_df.empty:
-            for group in recipes_df['RecipeName'].unique():
-                with st.expander(f"📦 {group} (Animals: {recipes_df[recipes_df['RecipeName']==group]['TotalAnimals'].iloc[0]})", expanded=True):
-                    sub = recipes_df[recipes_df['RecipeName'] == group]
-                    total_kg = 0
+    with col_main:
+        curr_r = st.session_state.get('sel_recipe', "NEW")
+        
+        if curr_r == "NEW":
+            st.subheader("🆕 Create New Formulation")
+            new_name = st.text_input("Enter Recipe Name (e.g. ELITE 2)").upper()
+            if st.button("Initialize Recipe"):
+                st.session_state.sel_recipe = new_name
+                st.rerun()
+        else:
+            st.subheader(f"📍 Recipe: {curr_r}")
+            
+            # --- FORM TO ADD INGREDIENTS ---
+            with st.expander("➕ Add Ingredient to Table"):
+                with st.form("ing_form"):
+                    f_items = stock_df[stock_df['Category']=='Feed']['ItemName'].tolist()
+                    c1, c2, c3 = st.columns([2,1,1])
+                    item = c1.selectbox("Item Description", f_items if f_items else ["Register Feed Items First"])
+                    qty = c2.number_input("Qty (per head)", min_value=0.0, step=0.1)
+                    mand = c3.selectbox("Issuance Mandatory", ["Yes", "No"])
                     
-                    # Display table
-                    for _, row in sub.iterrows():
-                        load = row['QtyPerAnimal'] * row['TotalAnimals']
-                        total_kg += load
-                        c1, c2, c3, c4 = st.columns([2,1,1,0.5])
-                        c1.write(f"🌾 **{row['ItemName']}**")
-                        c2.write(f"{row['QtyPerAnimal']} kg/head")
-                        c3.write(f"{load:,.0f} KG Total")
-                        if c4.button("🗑️", key=f"del_{group}_{row['ItemName']}"):
-                            conn.execute("DELETE FROM FeedRecipes WHERE RecipeName=? AND ItemName=?", (group, row['ItemName']))
-                            conn.commit()
-                            st.rerun()
+                    curr_animals = int(recipes_df[recipes_df['RecipeName']==curr_r]['TotalAnimals'].iloc[0]) if not recipes_df[recipes_df['RecipeName']==curr_r].empty else 100
+                    total_an = st.number_input("Total Animals for this Group", value=curr_animals)
                     
-                    st.divider()
-                    st.info(f"**Total Mix Weight: {total_kg:,.1f} KG**")
-                    
-                    # LINKED STOCK OUT BUTTON
-                    if st.button(f"🚜 FEEDING DONE: {group}", key=f"btn_{group}"):
-                        for _, row in sub.iterrows():
-                            usage = row['QtyPerAnimal'] * row['TotalAnimals']
-                            conn.execute("UPDATE ItemMaster SET Quantity = Quantity - ? WHERE ItemName = ?", (usage, row['ItemName']))
+                    if st.form_submit_button("Add to Table"):
+                        conn.execute("UPDATE FeedRecipes SET TotalAnimals = ? WHERE RecipeName = ?", (total_an, curr_r))
+                        conn.execute("INSERT OR REPLACE INTO FeedRecipes VALUES (?,?,?,?,?)", (curr_r, item, qty, mand, total_an))
                         conn.commit()
-                        st.success(f"Stock deducted for {group}!")
-                        st.balloons()
                         st.rerun()
 
-# --- TAB 2, 3, 4: CATEGORY DATA VIEWS ---
+            # --- PROFESSIONAL TABLE (AS PER IMAGE) ---
+            r_data = recipes_df[recipes_df['RecipeName'] == curr_r]
+            if not r_data.empty:
+                st.markdown("""
+                    <style>
+                        .tbl-hdr { background-color: #f0f2f6; font-weight: bold; padding: 10px; border-bottom: 2px solid #ddd; }
+                    </style>
+                """, unsafe_allow_html=True)
+                
+                # Table Header
+                h1, h2, h3, h4, h5 = st.columns([0.5, 3, 1, 1, 0.5])
+                h1.markdown("**Sr#**")
+                h2.markdown("**Item Description**")
+                h3.markdown("**Qty**")
+                h4.markdown("**Issuance Mandatory**")
+                h5.markdown("**-**")
+                
+                total_head_qty = 0
+                for i, row in enumerate(r_data.itertuples(), 1):
+                    total_head_qty += row.Qty
+                    d1, d2, d3, d4, d5 = st.columns([0.5, 3, 1, 1, 0.5])
+                    d1.write(i)
+                    d2.write(row.ItemName)
+                    d3.write(row.Qty)
+                    d4.write(row.Mandatory)
+                    if d5.button("❌", key=f"del_{row.ItemName}"):
+                        conn.execute("DELETE FROM FeedRecipes WHERE RecipeName=? AND ItemName=?", (curr_r, row.ItemName))
+                        conn.commit()
+                        st.rerun()
+                
+                st.divider()
+                st.info(f"**Group Summary:** Total Animals: {r_data['TotalAnimals'].iloc[0]} | Daily Ration per Head: {total_head_qty} KG")
+                
+                # POST BUTTON
+                if st.button(f"🚀 POST & ISSUE FEED ({curr_r})", type="primary", use_container_width=True):
+                    for row in r_data.itertuples():
+                        usage = row.Qty * row.TotalAnimals
+                        conn.execute("UPDATE ItemMaster SET Quantity = Quantity - ? WHERE ItemName = ?", (usage, row.ItemName))
+                    conn.commit()
+                    st.success(f"Stock Deducted for {curr_r} successfully!")
+                    st.balloons()
+
+# --- TAB 2: LIVE INVENTORY ---
 with t2:
-    st.subheader("💊 Medicines & Vaccines")
-    st.dataframe(stock_df[stock_df['Category'].isin(['Medicine', 'Vaccine'])], use_container_width=True)
-
-with t3:
-    st.subheader("🧬 Semen Straws")
-    st.dataframe(stock_df[stock_df['Category'] == 'Semen Straws'], use_container_width=True)
-
-with t4:
-    st.subheader("⛽ General Assets")
-    st.dataframe(stock_df[stock_df['Category'] == 'General Asset'], use_container_width=True)
-
-# --- TAB 5: COSTING & P&L ---
-with t5:
-    st.subheader("💰 Daily Feeding Cost Analysis")
-    if not recipes_df.empty:
-        costs = []
-        for _, r in recipes_df.iterrows():
-            rate = stock_df[stock_df['ItemName']==r['ItemName']]['Cost'].iloc[0] if r['ItemName'] in stock_df['ItemName'].values else 0
-            daily_c = rate * r['QtyPerAnimal'] * r['TotalAnimals']
-            costs.append({"Group": r['RecipeName'], "Item": r['ItemName'], "Daily Cost (Rs)": f"{daily_c:,.0f}"})
-        st.table(pd.DataFrame(costs))
-
-# --- TAB 6: FULL INVENTORY ---
-with t6:
-    st.subheader("📊 Current Stock (Master)")
+    st.subheader("📊 Current Warehouse Stock")
     st.dataframe(stock_df, use_container_width=True)
 
-# --- TAB 7: REGISTER NEW ---
-with t7:
-    st.subheader("➕ Register New Item")
-    with st.form("reg_new"):
+# --- TAB 3: MEDICINES & SEMEN ---
+with t3:
+    col_m, col_s = st.columns(2)
+    with col_m:
+        st.subheader("💊 Medicines")
+        st.table(stock_df[stock_df['Category'].isin(['Medicine', 'Vaccine'])])
+    with col_s:
+        st.subheader("🧬 Semen Bank")
+        st.table(stock_df[stock_df['Category'] == 'Semen Straws'])
+
+# --- TAB 4: COSTING / P&L ---
+with t5:
+    st.subheader("➕ Register New Stock Item")
+    with st.form("master_reg"):
         c1, c2, c3 = st.columns(3)
-        n = c1.text_input("Name").upper()
+        n = c1.text_input("Item Name").upper()
         c = c2.selectbox("Category", ["Feed", "Medicine", "Vaccine", "Semen Straws", "General Asset"])
         u = c3.selectbox("Unit", ["KG", "Bag", "Litre", "No"])
-        p = c1.number_input("Purchase Rate", min_value=0.0)
-        s = c2.number_input("Initial Stock", min_value=0.0)
-        if st.form_submit_button("Register"):
+        p = c1.number_input("Purchase Price (Rs)", min_value=0.0)
+        s = c2.number_input("Opening Stock Quantity", min_value=0.0)
+        if st.form_submit_button("SAVE TO MASTER"):
             if n:
                 conn.execute("INSERT OR REPLACE INTO ItemMaster VALUES (?,?,?,?,?)", (n, c, u, s, p))
                 conn.commit()
+                st.success(f"{n} registered!")
                 st.rerun()
+
+# --- TAB 6: GENERAL STORE ---
+with t6:
+    st.subheader("⛽ Fuel & General Assets")
+    st.dataframe(stock_df[stock_df['Category'] == 'General Asset'], use_container_width=True)
