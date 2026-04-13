@@ -8,128 +8,97 @@ from datetime import datetime
 def get_connection():
     db_path = os.path.join(os.getcwd(), 'Zuni.db')
     conn = sqlite3.connect(db_path, check_same_thread=False)
-    # 1. Item Master
-    conn.execute("""CREATE TABLE IF NOT EXISTS ItemMaster (
-        ItemName TEXT PRIMARY KEY, Category TEXT, UOM TEXT, 
-        Quantity REAL DEFAULT 0, Cost REAL DEFAULT 0)""")
-    # 2. Feed Recipes (Fix: Added OR REPLACE logic in code)
+    # Master Recipe Table (Ek baar set karne ke liye)
     conn.execute("""CREATE TABLE IF NOT EXISTS FeedRecipes (
-        PenID TEXT, ItemName TEXT, 
-        QtyPerAnimal REAL, TotalAnimals INTEGER,
-        PRIMARY KEY (PenID, ItemName))""")
-    # 3. Consumption Logs (For History)
+        PenID TEXT, ItemName TEXT, QtyPerAnimal REAL, PRIMARY KEY (PenID, ItemName))""")
+    # Animal Count Table (Tadad alag save hogi)
+    conn.execute("""CREATE TABLE IF NOT EXISTS PenAnimals (PenID TEXT PRIMARY KEY, TotalAnimals INTEGER)""")
+    # Daily Consumption Log
     conn.execute("""CREATE TABLE IF NOT EXISTS ConsumptionLog (
         Date TEXT, PenID TEXT, ItemName TEXT, TotalQty REAL, TotalCost REAL)""")
+    # Inventory
+    conn.execute("""CREATE TABLE IF NOT EXISTS ItemMaster (
+        ItemName TEXT PRIMARY KEY, Category TEXT, UOM TEXT, Quantity REAL DEFAULT 0, Cost REAL DEFAULT 0)""")
     conn.commit()
     return conn
 
 conn = get_connection()
-
-# --- BRANDING ---
-st.set_page_config(page_title="Zuni ERP Master", layout="wide")
-st.markdown("""
-    <div style='background: linear-gradient(90deg, #001F3F 0%, #003366 100%); padding: 20px; border-radius: 15px; border-bottom: 5px solid #FF851B; margin-bottom: 20px;'>
-        <h1 style='color: white; margin: 0;'>📦 ZUNI <span style='color: #FF851B;'>PRO ERP MASTER</span></h1>
-        <p style='color: #FF851B; margin: 0;'>Precision Feeding & Date-Wise History | FY 2026</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-# Fetch Data
 stock_df = pd.read_sql("SELECT * FROM ItemMaster", conn)
-recipes_df = pd.read_sql("SELECT * FROM FeedRecipes", conn)
 
-# Tabs
-t1, t2, t3, t4, t5, t6 = st.tabs(["🌾 DAILY FEEDING", "📜 FEED HISTORY", "📊 STOCK REPORT", "💊 MEDICINES", "⛽ GENERAL STORE", "➕ ADD/EDIT MASTER"])
+# --- 1. DAILY FEEDING (CONSOLIDATED SYSTEM) ---
+st.title("🌾 Zuni Daily Feed System")
 
-# --- 1. DAILY FEEDING (With Fix) ---
-with t1:
-    st.subheader("📋 Pen Recipe Master")
-    with st.container(border=True):
-        with st.form("tmr_form"):
-            c1, c2 = st.columns(2)
-            f_pen = c1.text_input("PEN NAME").upper()
-            f_count = c2.number_input("TOTAL ANIMALS", min_value=1, value=1)
-            st.write("---")
-            feed_items = stock_df[stock_df['Category']=='Feed']
-            recipe_list = []
-            if not feed_items.empty:
-                cols = st.columns(4)
-                for idx, row in enumerate(feed_items.itertuples()):
-                    with cols[idx % 4]:
-                        qty = st.number_input(f"{row.ItemName}", min_value=0.0, format="%.2f", key=f"f_{row.ItemName}")
-                        if qty > 0: recipe_list.append((f_pen, row.ItemName, qty, f_count))
-            
-            if st.form_submit_button("🚀 SAVE RECIPE"):
-                if f_pen and recipe_list:
-                    conn.execute("DELETE FROM FeedRecipes WHERE PenID=?", (f_pen,))
-                    # FIXED: Added INSERT OR REPLACE to avoid IntegrityError
-                    conn.executemany("INSERT OR REPLACE INTO FeedRecipes VALUES (?,?,?,?)", recipe_list)
-                    conn.commit()
-                    st.success(f"Recipe saved for {f_pen}!")
-                    st.rerun()
+tabs = st.tabs(["🚜 CONFIRM DAILY FEED", "🛠️ SET MASTER RECIPE", "📜 HISTORY"])
 
-    if not recipes_df.empty:
-        st.divider()
-        for pen in recipes_df['PenID'].unique():
+# --- TAB 1: DAILY FEED (Rozana ka kaam) ---
+with tabs[0]:
+    st.subheader("Daily Feeding Confirmation")
+    # Get all pens that have a recipe
+    saved_pens = pd.read_sql("SELECT DISTINCT PenID FROM FeedRecipes", conn)['PenID'].tolist()
+    
+    if saved_pens:
+        for pen in saved_pens:
             with st.container(border=True):
-                p_data = recipes_df[recipes_df['PenID'] == pen].copy()
-                p_data['Total Load'] = p_data['QtyPerAnimal'] * p_data['TotalAnimals']
-                st.markdown(f"#### 📍 {pen} (Animals: {p_data['TotalAnimals'].iloc})")
-                st.table(p_data[['ItemName', 'QtyPerAnimal', 'Total Load']])
+                # Get current animal count
+                current_count_res = conn.execute("SELECT TotalAnimals FROM PenAnimals WHERE PenID=?", (pen,)).fetchone()
+                current_count = current_count_res[0] if current_count_res else 10
                 
-                # DATE SELECTION FOR CONSUMPTION
-                f_date = st.date_input("Feeding Date", datetime.now(), key=f"date_{pen}")
+                c1, c2 = st.columns([2,1])
+                c1.markdown(f"### 📍 {pen}")
+                new_count = c2.number_input(f"Animals in {pen}", min_value=1, value=current_count, key=f"count_{pen}")
                 
-                if st.button(f"✅ CONFIRM FEEDING ({pen})", key=f"btn_{pen}"):
-                    for _, r in p_data.iterrows():
-                        # Get Item Cost
-                        rate = stock_df[stock_df['ItemName']==r['ItemName']]['Cost'].values[0] if not stock_df[stock_df['ItemName']==r['ItemName']].empty else 0
+                # Fetch the master recipe for this pen
+                p_recipe = pd.read_sql(f"SELECT * FROM FeedRecipes WHERE PenID='{pen}'", conn)
+                p_recipe['Total Load'] = p_recipe['QtyPerAnimal'] * new_count
+                
+                st.dataframe(p_recipe[['ItemName', 'QtyPerAnimal', 'Total Load']], use_container_width=True, hide_index=True)
+                
+                f_date = st.date_input("Feeding Date", datetime.now(), key=f"d_{pen}")
+                
+                if st.button(f"🚀 Confirm & Deduct Stock ({pen})", key=f"btn_{pen}"):
+                    # Save the animal count for next time
+                    conn.execute("INSERT OR REPLACE INTO PenAnimals VALUES (?,?)", (pen, new_count))
+                    
+                    for _, r in p_recipe.iterrows():
+                        rate_res = conn.execute("SELECT Cost FROM ItemMaster WHERE ItemName=?", (r['ItemName'],)).fetchone()
+                        rate = rate_res[0] if rate_res else 0
                         total_cost = r['Total Load'] * rate
-                        # 1. Deduct Stock
+                        
+                        # Deduct Stock & Log
                         conn.execute("UPDATE ItemMaster SET Quantity = Quantity - ? WHERE ItemName = ?", (r['Total Load'], r['ItemName']))
-                        # 2. Log History
-                        conn.execute("INSERT INTO ConsumptionLog VALUES (?,?,?,?,?)", (f_date.strftime('%Y-%m-%d'), pen, r['ItemName'], r['Total Load'], total_cost))
+                        conn.execute("INSERT INTO ConsumptionLog VALUES (?,?,?,?,?)", 
+                                     (f_date.strftime('%Y-%m-%d'), pen, r['ItemName'], r['Total Load'], total_cost))
+                    
                     conn.commit()
-                    st.success(f"Feeding recorded for {f_date}")
+                    st.success(f"Feeding recorded for {pen} on {f_date}")
                     st.rerun()
-
-# --- 2. FEED HISTORY (DATE-WISE) ---
-with t2:
-    st.subheader("📜 Daily Consumption History")
-    history_df = pd.read_sql("SELECT * FROM ConsumptionLog ORDER BY Date DESC", conn)
-    if not history_df.empty:
-        # Date Filter
-        search_date = st.date_input("Filter by Date", datetime.now())
-        filtered_h = history_df[history_df['Date'] == search_date.strftime('%Y-%m-%d')]
-        st.dataframe(filtered_h, use_container_width=True, hide_index=True)
-        st.metric("Total Cost for Day", f"Rs. {filtered_h['TotalCost'].sum():,.0f}")
     else:
-        st.info("No feeding records found.")
+        st.warning("Pehle 'SET MASTER RECIPE' tab mein ja kar recipe banayein.")
 
-# --- 3. STOCK REPORT ---
-with t3:
-    st.subheader("📊 Current Stock Status")
-    st.dataframe(stock_df, use_container_width=True, hide_index=True)
+# --- TAB 2: MASTER RECIPE SETUP (Kabhi kabhi wala kaam) ---
+with tabs[1]:
+    st.subheader("🛠️ Define Master Recipe (One-Time Setup)")
+    with st.form("master_recipe_form"):
+        f_pen = st.text_input("New or Existing Pen Name").upper()
+        feed_items = stock_df[stock_df['Category']=='Feed']
+        
+        updates = []
+        cols = st.columns(3)
+        for idx, row in enumerate(feed_items.itertuples()):
+            with cols[idx % 3]:
+                qty = st.number_input(f"{row.ItemName} (kg/animal)", min_value=0.0)
+                if qty > 0: updates.append((f_pen, row.ItemName, qty))
+        
+        if st.form_submit_button("Save Master Recipe"):
+            if f_pen and updates:
+                conn.execute("DELETE FROM FeedRecipes WHERE PenID=?", (f_pen,))
+                conn.executemany("INSERT INTO FeedRecipes VALUES (?,?,?)", updates)
+                conn.commit()
+                st.success("Master Recipe Saved!")
+                st.rerun()
 
-# --- 4 & 5. MEDICINES & GENERAL STORE ---
-for i, cat in enumerate(["Medicine", "General Asset"], 4):
-    with [t4, t5][i-4]:
-        st.subheader(f"📦 {cat} Records")
-        cat_data = stock_df[stock_df['Category'] == cat]
-        st.dataframe(cat_data, use_container_width=True, hide_index=True)
-
-# --- 6. ADD/EDIT MASTER ---
-with t6:
-    st.subheader("➕ Inventory Master Form")
-    edit_data = st.session_state.get('edit_item', {})
-    with st.form("master_form"):
-        n = st.text_input("Item Name", value=edit_data.get('ItemName', '')).upper()
-        c = st.selectbox("Category", ["Feed", "Medicine", "Semen Straws", "General Asset"], index=0)
-        u = st.selectbox("Unit", ["KG", "Bag", "Litre", "ml", "Straw", "Each"], index=0)
-        q = st.number_input("Quantity", value=0.0)
-        r = st.number_input("Rate", value=0.0)
-        if st.form_submit_button("💾 Save Item"):
-            conn.execute("INSERT OR REPLACE INTO ItemMaster VALUES (?,?,?,?,?)", (n, c, u, q, r))
-            conn.commit()
-            st.success("Item saved!")
-            st.rerun()
+# --- TAB 3: HISTORY ---
+with tabs[2]:
+    st.subheader("📜 Date-wise Consumption")
+    history_df = pd.read_sql("SELECT * FROM ConsumptionLog ORDER BY Date DESC", conn)
+    st.dataframe(history_df, use_container_width=True)
